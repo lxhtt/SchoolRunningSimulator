@@ -2,14 +2,17 @@
 
 面向步态与 GPS 数据仿真的 Android 项目。当前版本为 **P0 工程骨架**：包含纯 Kotlin/JVM 运动学内核和 Compose 验证页；尚不是完整的跑步模拟器。
 
-> **项目状态：未完成云端构建验收。** Kotlin 编译、JUnit 执行、Android lint、APK 构建和真机验证尚未完成。配置文件存在不代表构建已通过。
+> **项目状态：云端构建与测试已通过；真机界面验收待执行。**
+>
+> 已实测：Kotlin 编译、14/14 JUnit 测试（JDK 17 与 21）、Android lint、debug APK 生成与下载校验。
+> 未完成：手机安装与启动页界面确认。详见 [`docs/P0-IMPLEMENTATION.md`](docs/P0-IMPLEMENTATION.md)。
 
 ## 当前功能
 
 - 纯 Kotlin/JVM 内核：按 `speedMps = cadenceSpm × stepLengthMeters / 60` 换算步频、单步长度和速度，并校验数值输入。
-- 14 个 JUnit 5 测试定义：覆盖换算、边界、非法输入、溢出和往返计算。
+- 14 个 JUnit 5 测试：覆盖换算、边界、非法输入、溢出和往返计算；已在云端 JDK 17 与 21 实际跑通（failures=0、errors=0）。
 - Compose 验证页：显示明确标为非实测的演示值。
-- GitHub Actions：配置 JDK 17/21 内核测试、Android lint 和 debug APK 构建。
+- GitHub Actions：JDK 17/21 内核测试 → Android lint → debug APK 与 SHA-256 产物，最近一次运行三个 job 全绿。
 - 离线工程检查脚本；本地构建入口默认阻止依赖下载。
 
 ## 构建和验证
@@ -22,7 +25,7 @@ python3 scripts/check_project.py
 
 没有明确下载许可和网络预算时，不要运行 `./gradlew`（包括 `--offline`）：Wrapper 可能先下载 Gradle 发行包。
 
-目标仓库为 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，CI 目标分支为 `master`。在代码获授权推送、且 Actions 成功运行后，可从 Actions Artifact 下载 debug APK；**目前没有可下载的 APK**。云端构建步骤和本机安装说明见 [`docs/BUILD.md`](docs/BUILD.md)。
+目标仓库为 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，CI 目标分支为 `master`。云端构建已成功（run [`35848681022`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/35848681022)）；可在该 run 的 Artifacts 中下载 `ratemock-debug-2` 获得 `app-debug.apk` 与 `SHA256SUMS`（保留 7 天）。构建步骤和安装说明见 [`docs/BUILD.md`](docs/BUILD.md)。
 
 ## 模型边界
 

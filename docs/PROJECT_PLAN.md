@@ -114,13 +114,13 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 - Wrapper 默认使用官方分发地址并校验 SHA-256。阿里 Maven 镜像为显式可选项；镜像加速不等于省流量。
 - GitHub Actions 仅上传 debug APK、SHA-256 和测试报告，不自动发 Release，不使用个人签名，不作免费额度承诺。
 - CNB 作为后续备通道，本次不创建未经测试的 `.cnb.yml`。共享入口和后续条件见 `BUILD.md`。
-- 本地仓库尚未初始化；没有 commit/push，也未触发云任务。**CI 配置不代表云端已经验收通过。**
+- 本地仓库已初始化，`master` 已推送到 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)；云端已跑通测试、lint 与 APK 构建。
 
-本地没有 Android SDK，因此 UI 编译预览和真机验证暂未执行；P2 的界面逻辑仍应尽量保持可单测。
+平台版本从 37 回退到 36，因为 37 在 CI stable channel 不可安装（首次 run `35842081920` 已证）。真机界面验收尚未执行；P2 的界面逻辑仍应尽量保持可单测。
 
 | Phase | 交付物 | 关键风险 | 验证方式 |
 |---|---|---|---|
-| P0 环境 | Gradle 9.7.1 Wrapper + AGP 9.3.1 / Kotlin 2.4.20 + 两个独立构建 + GH Actions master workflow；本地不下载 SDK 或构建依赖 | Kotlin 官方兼容表 fully-supported 列至 Gradle 9.7.0；9.7.1 组合待云端实测 | 云端 JDK 17/21 单测、lint、API 36 APK 和真机启动 |
+| P0 环境 | Gradle 9.7.1 Wrapper + AGP 9.3.1 / Kotlin 2.4.20 + 两个独立构建 + GH Actions master workflow；本地不下载 SDK 或构建依赖 | 已通过云端实测（run `35848681022`）；Kotlin 官方兼容表列至 9.7.0，9.7.1 由实测覆盖 | 已完成：JDK 17/21 单测（14/14）、lint、API 36 APK；剩余真机启动确认 |
 | **P1 内核** | `sim-core` 全量：可行性求解器、CadenceModel、StrideModel、FatigueModel、GpsStream、Gauss-Markov 噪声、StatsReporter | **模型是否生理可信**——这是唯一真正的技术难点 | 单测：步长/步频/速度恒等式；边界夹取；噪声自相关；10 次不同随机种子的曲线目视比对 |
 | **P2 仿真跑台** | Compose 表单（区间/距离/体重身高）→ 实时仪表盘 + 双曲线 + 轨迹地图 + 语音提示 + 结束导出 JSON/GPX/CSV | 图表与地图首次集成；**无法本地预览 UI** | 真机跑一次仿真，肉眼核对曲线无阶跃、无锁频 |
 | **P3 真跑模式** | 前台服务采真 GPS；峰值检测真实步频；实时对比目标 ↔ 实际并语音修正 | 步频检测在口袋/手持场景鲁棒性差 | 户外实跑 3 次，误差 < ±5 步/分 |
@@ -154,10 +154,7 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 
 ## 7. 下一步
 
-1. P0 源码、Wrapper、测试定义与 GitHub Actions 已写好；离线检查结果见 [`P0-IMPLEMENTATION.md`](P0-IMPLEMENTATION.md)。
-2. 目标仓库和分支已确定：[`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，`master`。初始化本地 Git、commit、push 及触发 Actions 仍须用户单独授权；未获授权前不执行远程写入。
-3. 核对 JDK 17/21 单测、Android lint、APK 产物和手机启动结果，修正真实编译问题。
-4. P0 云端验收通过后进入 P1，细化可行域与可校准模型，不把未验证的生理系数写死。
-2. 目标仓库和分支已确定：[`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，`master`。初始化本地 Git、commit、push 及触发 Actions 仍须用户单独授权；未获授权前不执行远程写入。
-3. 核对 JDK 17/21 单测、Android lint、APK 产物和手机启动结果，修正真实编译问题。
-4. P0 云端验收通过后进入 P1，细化可行域与可校准模型，不把未验证的生理系数写死。
+1. P0 已完成云端验收：run [`35848681022`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/35848681022) 三个 job 全绿，14/14 单测通过，lint 通过，APK 已生成并校验；细节见 [`P0-IMPLEMENTATION.md`](P0-IMPLEMENTATION.md)。
+2. 剩余唯一验收项：真机安装 APK，确认启动页显示“2.70 米/秒”，并检查小屏/横屏/大字体/深浅色。
+3. 真机确认后进入 P1：细化可行域求解、状态机与可校准步态模型，不把未验证的生理系数写死。
+4. 可选清理项（不阻塞 P1）：升级 `upload-artifact` 到不含 Node.js 20 弃用的版本；评估 AGP/compileSdk/依赖版本升级；确认 API 37 平台可用性。
