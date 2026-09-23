@@ -1,0 +1,47 @@
+# RateMock
+
+面向步态与 GPS 数据仿真的 Android 项目。当前版本为 **P0 工程骨架**：包含纯 Kotlin/JVM 运动学内核和 Compose 验证页；尚不是完整的跑步模拟器。
+
+> **项目状态：未完成云端构建验收。** Kotlin 编译、JUnit 执行、Android lint、APK 构建和真机验证尚未完成。配置文件存在不代表构建已通过。
+
+## 当前功能
+
+- 纯 Kotlin/JVM 内核：按 `speedMps = cadenceSpm × stepLengthMeters / 60` 换算步频、单步长度和速度，并校验数值输入。
+- 14 个 JUnit 5 测试定义：覆盖换算、边界、非法输入、溢出和往返计算。
+- Compose 验证页：显示明确标为非实测的演示值。
+- GitHub Actions：配置 JDK 17/21 内核测试、Android lint 和 debug APK 构建。
+- 离线工程检查脚本；本地构建入口默认阻止依赖下载。
+
+## 构建和验证
+
+低流量环境可运行不下载依赖的静态检查：
+
+```sh
+python3 scripts/check_project.py
+```
+
+没有明确下载许可和网络预算时，不要运行 `./gradlew`（包括 `--offline`）：Wrapper 可能先下载 Gradle 发行包。
+
+目标仓库为 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，CI 目标分支为 `master`。在代码获授权推送、且 Actions 成功运行后，可从 Actions Artifact 下载 debug APK；**目前没有可下载的 APK**。云端构建步骤和本机安装说明见 [`docs/BUILD.md`](docs/BUILD.md)。
+
+## 模型边界
+
+`stepLength` 是每一步的前进距离，不等于完整左右脚循环的 `stride length`。GPS 速度不能单独、唯一确定步频。当前内核只做运动学换算；个体校准、仿真轨迹、GPS 观测噪声及传感器建模均未实现。产品阶段和风险说明见 [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)。
+
+本项目不保证与任何第三方应用、校园跑平台或设备兼容，也不承诺绕过第三方服务的检测或规则。研究笔记不是已实现功能说明：[`docs/DESIGN-injection-fusion.md`](docs/DESIGN-injection-fusion.md)。
+
+## 文档导航
+
+- [完整文档索引](docs/README.md)
+- [项目计划](docs/PROJECT_PLAN.md)
+- [构建与验证](docs/BUILD.md)
+- [P0 实施记录](docs/P0-IMPLEMENTATION.md)
+- [探索性定位注入研究笔记](docs/DESIGN-injection-fusion.md)
+
+## 许可
+
+RateMock 原创内容按 Apache License 2.0 授权，详见 [`LICENSE`](LICENSE)。该许可不覆盖明确标注的第三方材料；Gradle Wrapper 与其他依赖各自受其上游许可约束。开始分发构建产物前，请核查并保留相应的第三方许可与声明，见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+
+## 致谢
+
+RateMock 使用 Kotlin、Android Jetpack Compose、Gradle、JUnit 5 与 GitHub Actions 等开源工具和项目。第三方构建文件及可核实的上游信息列于 [`CREDITS.md`](CREDITS.md)。致谢不代表上游对 RateMock 的认可或背书。

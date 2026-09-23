@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RateMock</string>
+    <string name="build_stage">P0 · 构建验证</string>
+    <string name="screen_title">从每一步开始</string>
+    <string name="screen_description">步频仿真引擎已接入。当前是工程验证版，尚未开始采集 GPS 或生成跑步数据。</string>
+    <string name="sample_title">运动学演示 · 非实测</string>
+    <string name="sample_inputs">步频 180 步/分\n单步长度 0.90 米/步</string>
+    <string name="speed_result">%1$.2f 米/秒</string>
+    <string name="speed_label">对应前进速度</string>
+    <string name="speed_formula">v = 步频 × 单步长度 ÷ 60</string>
+    <string name="next_phase">下一阶段：区间约束、步态模型与可重复仿真。</string>
+    <string name="privacy_note">本版本不申请定位权限，也不会修改系统定位。</string>
+</resources>

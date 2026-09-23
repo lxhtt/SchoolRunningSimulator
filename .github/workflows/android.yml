@@ -1,0 +1,112 @@
+name: Android CI
+
+'on':
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**/*.md'
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - '**/*.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  core:
+    name: JVM core (JDK ${{ matrix.java }}, SDK-independent)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['17', '21']
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Check project without dependencies
+        run: python3 scripts/check_project.py
+      - name: Set up Gradle cache and validate wrapper
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Run core tests without Android environment
+        run: bash scripts/test-core.sh
+      - name: Upload core test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: core-test-reports-jdk-${{ matrix.java }}
+          path: |
+            sim-core/build/reports/tests/test/
+            sim-core/build/test-results/test/
+          if-no-files-found: warn
+          retention-days: 7
+
+  android:
+    name: Lint and debug APK
+    needs: core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle cache and validate wrapper
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Install exact SDK components on the runner only
+        run: |
+          sdk_manager="${ANDROID_HOME:?Android SDK must be supplied by the runner}/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdk_manager"
+          # Ignore `yes` receiving SIGPIPE; preserve sdkmanager's exit status.
+          set +o pipefail
+          yes | "$sdk_manager" --licenses > /dev/null
+          set -o pipefail
+          "$sdk_manager" "platforms;android-37" "build-tools;36.0.0"
+      - name: Lint and build
+        run: bash scripts/build-android.sh
+      - name: Create APK checksum
+        working-directory: app/build/outputs/apk/debug
+        run: sha256sum app-debug.apk > SHA256SUMS
+      - name: Upload debug APK and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ratemock-debug-${{ github.run_number }}
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload lint reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-lint-reports
+          path: app/build/reports/lint-results-debug.*
+          if-no-files-found: warn
+          retention-days: 7

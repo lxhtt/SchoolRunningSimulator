@@ -1,0 +1,24 @@
+# Local/editor state
+.DS_Store
+.idea/
+*.iml
+.pi/
+
+# Build outputs (all builds, including sim-core)
+.gradle/
+.kotlin/
+build/
+local.properties
+
+# Credentials and signing material
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+keystore.properties
+secrets.properties
+
+# Python verification caches
+__pycache__/
+*.pyc
