@@ -2,19 +2,21 @@
 
 > 状态：设计待评审。本文只描述设计，**未实现、未测试**。
 > 前置：P0 已通过云端实测（run `35848681022`：JDK 17/21 单测 14/14、lint、debug APK）。
-> 已确认的选择：**无真实校准数据**、**分段配速 + 平滑过渡**、**可配置折线路线**。
+> 已确认的选择：**分段配速 + 平滑过渡**、**可配置折线路线**、**步频随速度变化（A2）**、**交付库 + 单测 + 最小 CLI（B1）**、**默认参数全部标注未校准**、**计划通过实跑获取校准数据**。
 
 ## 1. 范围
 
 ### 1.1 目标
 
-让 `sim-core` 能独立产出**可解释、可重复校验**的仿真数据：给定速度/步频/步长约束与一条路线，生成真值轨迹、步事件、GPS 观测、以及可导出文件。全程纯 Kotlin/JVM，不依赖 Android，可本地单测（CI 上跑）。
+让 `sim-core` 能独立产出**可解释、可重复校验**的仿真数据：给定速度/步频/步长约束与一条路线，生成真值轨迹、步事件、GPS 观测、以及可导出文件。全程纯 Kotlin/JVM，不依赖 Android，可在 CI 上单测。
+
+同时提供**校准基础设施**：导入真实跑步数据、拟合步频模型参数、报告拟合质量与适用范围。校准数据的**采集**方式见 §11。
 
 ### 1.2 明确不做
 
 | 不做 | 原因 |
 |---|---|
-| 真实数据校准 | 用户暂无真实跑步数据；参数一律标注"未校准" |
+| 声称参数已校准 | 目前没有任何真实数据；拟合机制先做好，数据由实跑补齐 |
 | 心率、着地时间、垂直振幅 | 无来源，不臆造生理公式 |
 | 卫星数模型、地形海拔变化 | 推迟到有实测依据时再做 |
 | IMU 波形合成 | 属 P5/P7 |
@@ -22,28 +24,33 @@
 | 定位注入（mock / LSPosed） | 属 P4/P5/P7 |
 | 多线程/协程并发 | P1 只需确定性单线程纯函数；并发留给 P2 的 UI 侧 |
 
-### 1.3 需要你拍板的两个选项
+### 1.3 已定决策
 
-| 编号 | 选项 | 我的推荐 | 理由 |
-|---|---|---|---|
-| **A** | 步频策略：A1 固定目标步频（步长由恒等式导出）／A2 步频随速度变化（幂律或线性） | **A1** | 没有校准数据时，A2 的系数只能是臆测。A1 把不确定性集中到一个可解释参数上；接口留 `CadencePolicy`，有数据后再插 A2 |
-| **B** | 交付形态：B1 库 + 单测 + 最小 CLI／B2 只交付库 + 单测 | **B1** | 计划里"10 次不同随机种子的曲线目视比对"需要能脱离 Android 跑出数据；CLI 可零新增依赖实现 |
+| 编号 | 决策 | 说明 |
+|---|---|---|
+| A | **A2：步频随速度变化** | 幂律或线性模型，参数可校准；见 §2.2、§10 |
+| B | **B1：库 + 单测 + 最小 CLI** | `sim-core` 加 `application` 插件；手写序列化，零新增依赖 |
+| C | 默认参数全部标注"未校准" | 文档、代码注释、导出文件三处同时标注 |
+| D | 校准走实跑数据 | 拟合与导入在 P1 实现；采集方式待定，见 §11 |
 
-## 1.4 建议交付顺序
+### 1.4 建议交付顺序
 
 P1 较大，按可单独验收的切片推进，每片都可以单独跑 CI：
 
 | 切片 | 内容 | 验收 |
 |---|---|---|
-| **S1** | `FeasibilitySolver` + `CadencePolicy`（A1） | 端点边界与冲突消息测试全绿 |
+| **S1** | `FeasibilitySolver` + `CadencePolicy`（A2 幂律 + 区间夹取 + 夹取计数） | 端点边界、冲突消息、夹取记录测试全绿 |
 | **S2** | `SimConfig` + `RunPlan` + `SpeedPlanner` 平滑 | 限加速度/限 jerk/收敛性测试 |
 | **S3** | `RunState` + `GaitEngine` + `StepEvent`（真值层） | 恒等式、距离积分、状态机、可复现 |
 | **S4** | `Route` + `RouteProjector` + `GpsStream` + `GaussMarkov` | 噪声统计与投影测试 |
 | **S5** | `export/*` + `cli/Main` | 导出回读与端到端冒烟 |
+| **S6** | `calibration/*`：CSV 导入 + 拟合 + 报告 + CLI 子命令 | 合成数据可还原参数；样本不足被拒绝 |
 
-前 4 片是纯 JVM 单测；第 5 片才需要 CLI。若某片暴露出设计问题，不会拖累已验收的切片。
+S1–S4 是纯 JVM 单测；S5、S6 才用到 CLI。
 
-## 2. 数学基础（可行性判据）
+## 2. 数学基础
+
+### 2.1 可行性判据
 
 单位恒等式：
 
@@ -69,15 +76,36 @@ v ≥ sMin·cMin / 60        （下界 vLo）
 v ≤ sMax·cMax / 60        （上界 vHi）
 ```
 
-**结论：整个速度区间 `[vMin, vMax]` 可行 ⟺ `vMin ≥ vLo` 且 `vMax ≤ vHi`。** 求解器只需比较两个端点，冲突时能给出精确数字（例如"要求最低速度 1.50 m/s，低于模型可达下限 1.867 m/s"），不需要数值搜索。
+**结论：速度区间 `[vMin, vMax]` 可行 ⟺ `vMin ≥ vLo` 且 `vMax ≤ vHi`。** 求解器只需比较两个端点，冲突时给出精确数字（例如"要求最低速度 1.50 m/s，低于模型可达下限 1.867 m/s"），不需要数值搜索。
 
-选定策略 A1（固定步频 `cTarget`）后，还有一层更严格的检查：整段计划速度必须满足
+等价地，给定 `v` 时的可行步频区间是：
 
 ```text
-vMin ≥ sMin·cTarget / 60   且   vMax ≤ sMax·cTarget / 60
+c ∈ [ max(cMin, 60v/sMax),  min(cMax, 60v/sMin) ]
 ```
 
-`FeasibilitySolver` 同时报告这两层结果，并区分"区间本身无解"与"当前步频策略下无解"。
+### 2.2 A2 步频策略与夹取
+
+步频由模型给出，再夹取到上述可行区间：
+
+```text
+cModel(v) = coefficient · v^exponent          （幂律族）
+c(v)      = clamp(cModel(v), feasible(v))      （feasible(v) 按 §2.1）
+s(v)      = 60·v / c(v)
+```
+
+关键性质：**只要 `v ∈ [vLo, vHi]`，`feasible(v)` 必非空，夹取后的 `c(v)` 仍在该区间内**，因此恒等式精确成立、步长必定落在 `[sMin, sMax]`。也就是说 A2 下可行性完全由 §2.1 的两个端点决定，模型本身不会让区间变得不可行。
+
+夹取是**策略偏离**，不是可行性失败，必须如实记录：`summary.json` 输出 `clampedSampleCount` 与 `clampedFraction`，避免"模型想要的速度-步频组合被静默改成区间边缘"。
+
+模型族（配置二选一）：
+
+| 族 | 形式 | 参数 |
+|---|---|---|
+| `PowerLaw` | `c = k · v^α` | `k > 0`，`α ∈ (0, 1]` |
+| `Linear` | `c = c0 + c1 · v` | 需保证区间内 `c > 0` |
+
+`FixedTarget`（固定步频）仍保留为第三种策略，便于对照与回归测试。
 
 ## 3. 模块与包结构
 
@@ -90,8 +118,8 @@ dev.ratemock.core
 │   ├── SimConfig.kt           配置数据类 + 文档化默认值
 │   └── Presets.kt             示例预设（含示例折线路线）
 ├── feasibility/
-│   ├── FeasibilitySolver.kt   §2 的判据与冲突报告
-│   └── CadencePolicy.kt       接口 + FixedTargetCadence 实现
+│   ├── FeasibilitySolver.kt   §2.1 的判据与冲突报告
+│   └── CadencePolicy.kt       策略接口 + PowerLaw / Linear / FixedTarget
 ├── plan/
 │   ├── RunPlan.kt             段序列 + 暂停窗口 + 会话级约束
 │   └── SpeedPlanner.kt        jerk 限制平滑（§5）
@@ -105,12 +133,16 @@ dev.ratemock.core
 ├── gps/
 │   ├── GaussMarkov.kt         一阶自回归噪声（§6）
 │   └── GpsStream.kt           真值 → 观测（采样率、精度字段）
+├── calibration/
+│   ├── CalibrationCsv.kt      解析 (speed, cadence) 样本
+│   ├── CadenceFitter.kt       幂律/线性最小二乘拟合
+│   └── CalibrationReport.kt   拟合质量、残差、适用范围
 ├── export/
 │   ├── CsvWriter.kt
 │   ├── JsonWriter.kt          手写，字段名带单位
 │   └── GpxWriter.kt
 └── cli/
-    └── Main.kt                CLI 入口（选项 B1）
+    └── Main.kt                CLI 入口（B1）
 ```
 
 `sim-core/build.gradle.kts` 只增加 `application` 插件（不引入新依赖）。手写 CSV/JSON/GPX 序列化避免引入解析库，代价是需自己保证转义与格式正确——用单测覆盖。
@@ -123,24 +155,29 @@ data class SimConfig(
     val schemaVersion: Int,                    // 配置结构版本，导出时写入，用于判断旧导出能否重算
     val cadenceRangeSpm: ClosedFloatingPointRange<Double>,
     val stepLengthRangeM: ClosedFloatingPointRange<Double>,
-    val cadencePolicy: CadencePolicyConfig,    // 选项 A：FixedTarget(targetSpm) / 未来可加模型型
+    val cadencePolicy: CadencePolicyConfig,    // §2.2：PowerLaw / Linear / FixedTarget
     val segments: List<Segment>,
     val pauses: List<PauseWindow>,             // 确定性暂停窗口
     val route: Route,
     val timebase: Timebase,
     val dynamics: DynamicsLimits,
-    val gpsNoise: GaussMarkovConfig?,           // null = 只输出真值，不生成观测层
+    val gpsNoise: GaussMarkovConfig?,          // null = 只输出真值，不生成观测层
 )
 
-data class Segment(
-    val targetSpeedMps: Double,
-    val limit: SegmentLimit,                   // Duration(秒) 或 Distance(米)
-)
+sealed interface CadencePolicyConfig {
+    data class PowerLaw(val coefficient: Double, val exponent: Double) : CadencePolicyConfig
+    data class Linear(val intercept: Double, val slope: Double) : CadencePolicyConfig
+    data class FixedTarget(val cadenceSpm: Double) : CadencePolicyConfig
+}
+
+data class Segment(val targetSpeedMps: Double, val limit: SegmentLimit)
+sealed interface SegmentLimit {
+    data class Duration(val seconds: Double) : SegmentLimit
+    data class Distance(val meters: Double) : SegmentLimit
+}
 
 data class PauseWindow(val startAfterSeconds: Double, val durationSeconds: Double)
-
 data class Timebase(val simStepHz: Double, val gpsSampleHz: Double)
-
 data class DynamicsLimits(val maxAccelMps2: Double, val maxJerkMps3: Double)
 
 data class GaussMarkovConfig(
@@ -201,7 +238,7 @@ STARTING ──▶ RUNNING ──▶ PAUSED ──▶ RUNNING ──▶ FINISHED
 - 零速度约定：`v = 0` 时 `c = 0`、`s = 0`，恒等式两侧同为 0（与 P0 现有校验一致，不引入"零步频非零速度"的非法态）。
 - 暂停：段计时与 GPS 采样暂停，`state = PAUSED`，真值位置不变；恢复后继续。
 - 结束条件：段序列走完，或路线在 `ONE_WAY` 模式下耗尽（终止态 `ROUTE_EXHAUSTED`，在 summary 中报告，不静默截断）。
-- 非法输入（NaN、Infinity、负值、空段、区间反转）在构造 `SimConfig` 时即抛错，不做"默默夹取"。
+- 非法输入（NaN、Infinity、负值、空段、区间反转、非正模型参数）在构造 `SimConfig` 时即抛错，不做"默默夹取"。
 
 ## 8. 路线
 
@@ -221,9 +258,9 @@ CLI 一次运行输出一组文件：
 | `steps.csv` | `t, distance_m, step_length_m, speed_mps` | 步事件序列 |
 | `gps.csv` | `t, lat, lon, altitude_m, horizontal_accuracy_m, vertical_accuracy_m, speed_mps, bearing_deg` | 观测层核验 |
 | `track.gpx` | 观测轨迹（标准 GPX） | 后续注入与地图核验 |
-| `summary.json` | 配置、种子、版本、可行性报告、达成距离/时长/步数 | 可独立重算 |
+| `summary.json` | 配置、种子、schema 版本、可行性报告、可行速度区间、夹取比例、达成距离/时长/步数 | 可独立重算 |
 
-所有响应字段名带单位后缀；JSON 写入 `uncalibrated: true` 与 `simulated: true` 标记，避免被当作实测数据。
+所有响应字段名带单位后缀；JSON 写入 `uncalibrated: true` 与 `simulated: true` 标记，避免被当作实测数据。若配置使用了拟合参数，summary 同时记录参数来源与拟合时的适用速度范围。
 
 ## 10. 参数默认值（全部标注"未校准"）
 
@@ -231,46 +268,93 @@ CLI 一次运行输出一组文件：
 |---|---|---|
 | `simStepHz` | 10 Hz | 工程默认（数值积分精度与耗时的折中） |
 | `gpsSampleHz` | 1 Hz | 常见跑步应用采样率，非普适标准 |
-| `maxAccelMps2` | 2.0 | 工程默认；公开运动学文献量级，**未针对本项目校准** |
+| `maxAccelMps2` | 2.0 | 工程默认；公开运动学量级，**未针对本项目校准** |
 | `maxJerkMps3` | 8.0 | 工程默认，无生理来源 |
 | `horizontalSigmaM` | 4.0 | 与常见消费级定位精度量级一致，**未校准** |
 | `verticalSigmaM` | 8.0 | 取水平 2 倍，**未校准** |
 | `correlationTimeSeconds` | 30.0 | 工程默认，**未校准** |
 | `cadenceRangeSpm`（示例） | 160–190 | **示例配置，非生理结论** |
 | `stepLengthRangeM`（示例） | 0.70–1.30 | **示例配置，非生理结论** |
-| `cadenceTargetSpm`（A1） | 区间中点（示例 175） | 示例配置 |
+| `PowerLaw.coefficient` | 127.0 | **未校准**；以"2.5 m/s 时约 175 步/分"锚定 |
+| `PowerLaw.exponent` | 0.35 | **未校准**；量级取自公开步态讨论，非本项目实测 |
 | `route`（示例） | 100 m × 100 m 方形环，锚点坐标标注为占位示例 | **非真实场地** |
+
+用这组示例参数算出的可达速度区间是 `vLo = 0.70×160/60 = 1.867 m/s`、`vHi = 1.30×190/60 = 4.117 m/s`。幂律在区间两端会被夹取（低于 1.9 m/s 触 `cMin`，高于约 3.5 m/s 触 `cMax`），这是刻意的：它正好演示"夹取要被记录"这条规则。
 
 这些量级参考了公开资料与常见设备行为，但**没有任何一项来自本项目自己的实测**。文档与导出都保留这一标注。
 
-## 11. 测试与验收映射
+## 11. 校准
+
+### 11.1 输入契约
+
+校准输入是一张 CSV，每行一个"稳定速度 ↔ 步频"观测：
+
+```text
+speed_mps,cadence_spm,weight
+2.50,172.0,1.0
+3.10,178.5,1.0
+```
+
+- 至少 8 行，且 `ln v` 方差非零、覆盖速度跨度不少于 0.5 m/s；否则拒绝并说明原因。
+- 允许可选 `weight` 列；缺省等权。
+- 采样协议要求：每行取**稳定段**的平均速度与平均步频，不含起步加速与暂停，避免把过渡过程当成稳态关系拟合。
+
+### 11.2 拟合
+
+- 幂律：对 `ln c = ln k + α·ln v` 做（加权）最小二乘。
+- 线性：对 `c = c0 + c1·v` 做（加权）最小二乘。
+- 报告 `k`/`α` 或 `c0`/`c1`、`R²`、残差序列、样本数、覆盖速度区间，并写入 `calibration.json`。
+
+### 11.3 诚实性约束
+
+- 拟合结果**只在覆盖速度区间内**可用；summary 必须带 `fittedSpeedRangeMps`，配置若超出该范围要给出显式警告。
+- 不允许把 `R²` 高当作"模型正确"的证据；报告保留残差图数据，供人工检查系统性偏差。
+- 校准产物与"未校准默认值"在导出中必须可区分（记录参数来源字段）。
+
+### 11.4 数据从哪来
+
+拟合与导入在 P1（S6）完成。**真实数据的采集方式另需决定**：
+
+| 方案 | 说明 | 代价 |
+|---|---|---|
+| 现有运动 App/手表导出 | 若有设备能导出含步频的 GPX/CSV，直接转成 §11.1 格式 | 取决于你手上的设备，可能没有步频字段 |
+| 新增最小记录器（Android） | 前台运行，同时记录 GPS 速度与 `TYPE_STEP_COUNTER`，导出 CSV | 需要定位与活动识别权限、真机调试；属于新增 Android 工作 |
+| 推迟到 P3 真跑模式 | P3 本来就要做前台服务采真 GPS + 真实步频检测 | 校准要等到 P3 之后 |
+
+手机单独记录 GPS 速度很容易，但**多数手机端应用不记录步频**，所以"有 GPS 没步频"是最常见的情况。这正是最小记录器值得单独考虑的原因。
+
+## 12. 测试与验收映射
 
 | 计划验收项 | 对应测试 |
 |---|---|
 | §5.1 单位明确、真值层满足恒等式 | 每个真值样本断言 `abs(v − c·s/60) < 1e-9`（相对）；穷举参数网格 |
-| §5.2 区间可行性、无解时给冲突 | `FeasibilitySolver` 端点边界测试；冲突消息包含精确数字；策略无解与区间无解分开断言 |
-| §5.3 状态行为与非法输入 | 状态机转移表逐条测试；NaN/Infinity/负值/空段/区间反转必须抛错 |
+| §5.2 区间可行性、无解时给冲突 | `FeasibilitySolver` 端点边界测试；冲突消息包含精确数字；区间无解与策略夹取分开断言 |
+| §5.3 状态行为与非法输入 | 状态机转移表逐条测试；NaN/Infinity/负值/空段/区间反转/非正模型参数必须抛错 |
 | §5.4 累计距离与速度积分一致 | 距离由速度积分得到（残差累加器生成步事件），断言 `abs(distance − ∫v dt)` 在容差内；步事件数与 `∫c/60 dt` 一致 |
-| §5.5 同种子可复现 | 相同 `(config, seed, version)` 逐字节相同；不同种子必须不同 |
+| §5.5 同种子可复现 | 相同 `(config, seed, schemaVersion)` 逐字节相同；不同种子必须不同 |
 | §5.6 导出带单位、可重算 | CSV/JSON/GPX 解析回读校验；字段名含单位；`uncalibrated`/`simulated` 标记存在 |
 | 噪声模型 | 自相关、均值、方差、`τ→0` 退化、可复现 |
 | 平滑限制 | `abs(a)` 与 `abs(jerk)` 上界；段切换无阶跃；稳定段收敛到目标 |
+| A2 夹取 | 步长始终在区间内；夹取计数与实际夹取样本一致；夹取后恒等式仍精确成立 |
+| 校准拟合 | 由已知 `(k, α)` 合成含噪样本可还原参数；样本不足/跨度不足/退化方差必须拒绝；残差被报告 |
 
 `scripts/check_project.py` 目前硬编码"14 个测试"，实现 P1 时必须同步更新该计数与检查项。
 
-## 12. 风险
+## 13. 风险
 
 | 风险 | 影响 | 处置 |
 |---|---|---|
-| 默认参数无实测支撑，被误当作真实结论 | 用户误信 | 文档、代码注释、导出文件三处同时标注"未校准" |
+| 默认参数无实测支撑，被误当作真实结论 | 用户误信 | 文档、代码注释、导出文件三处同时标注"未校准"；参数来源字段可机器区分 |
+| A2 在区间两端被大量夹取，实际退化成固定步频 | 模型名不副实 | 导出夹取比例；若比例过高在 summary 中提示"该速度段实际由区间边界主导" |
+| 校准样本只覆盖窄速度段 | 外推错误 | 强制记录 `fittedSpeedRangeMps`；超出范围时显式警告 |
 | 平滑滤波器在段极短时超调或来回振荡 | 速度曲线不平滑 | 单测覆盖"极短段"与"频繁切换"；必要时限制段最小时长 |
 | 等距圆柱投影在长距离失真 | 轨迹形状错误 | 文档写明适用距离；跨纬度场景报错而非静默失真 |
 | 手写 JSON/CSV/GPX 转义出错 | 导出文件损坏 | 专门测试转义、空值、非 ASCII、超长小数 |
 | 路线耗尽未报告 | 数据被静默截断 | `ROUTE_EXHAUSTED` 终止态 + summary 明确字段 |
 
-## 13. 待评审确认
+## 14. 待评审确认
 
-1. 选项 **A**（步频策略）取 A1 固定目标步频？
-2. 选项 **B**（交付形态）取 B1 含最小 CLI？
-3. §10 默认值的取舍是否接受（全部标注未校准）？
+1. §2.2 的模型族与夹取规则是否接受（夹取要记录、恒等式仍精确成立）？
+2. §11.4 的采集方式选哪一个（现有设备导出 / 新增最小记录器 / 推迟到 P3）？
+3. §10 默认值是否接受（全部标注未校准）？
 4. §1.2 "不做"清单是否需要增删？
