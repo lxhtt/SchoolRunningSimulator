@@ -105,7 +105,7 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 |---|---|---|
 | XML/TOML、Wrapper、shell 与下载保护检查 | 本地 | 可零网络运行 `python3 scripts/check_project.py` |
 | `sim-core` JUnit 测试 | 云端 JDK 17/21 | 工作流已配置，尚未运行 |
-| Gradle 与 Android 构建链 | Wrapper 9.7.1；AGP 9.3.1 / Kotlin 2.4.20；API 37 / Build Tools 36.0.0 | 工作流已配置，尚未运行；兼容性说明见 [`BUILD.md`](BUILD.md) |
+| Gradle 与 Android 构建链 | Wrapper 9.7.1；AGP 9.3.1 / Kotlin 2.4.20；API 36 / Build Tools 36.0.0 | 工作流已配置，尚未运行；兼容性说明见 [`BUILD.md`](BUILD.md) |
 | 真机验证 | 手机 | CI 成功后下载 APK，文件管理器安装，不强制要求 adb |
 
 - `sim-core` 使用自己的 `settings.gradle.kts`。独立命令为 `./gradlew -p sim-core test`，而不是依赖根 Android 工程能跳过 SDK 检查。
@@ -120,7 +120,7 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 
 | Phase | 交付物 | 关键风险 | 验证方式 |
 |---|---|---|---|
-| **P0 环境** | Gradle 9.7.1 Wrapper + AGP 9.3.1 / Kotlin 2.4.20 + 两个独立构建 + GH Actions master workflow；本地不下载 SDK 或构建依赖 | Kotlin 官方兼容表 fully-supported 列至 Gradle 9.7.0；9.7.1 组合待云端实测 | 云端 JDK 17/21 单测、lint、APK 和真机启动 |
+| P0 环境 | Gradle 9.7.1 Wrapper + AGP 9.3.1 / Kotlin 2.4.20 + 两个独立构建 + GH Actions master workflow；本地不下载 SDK 或构建依赖 | Kotlin 官方兼容表 fully-supported 列至 Gradle 9.7.0；9.7.1 组合待云端实测 | 云端 JDK 17/21 单测、lint、API 36 APK 和真机启动 |
 | **P1 内核** | `sim-core` 全量：可行性求解器、CadenceModel、StrideModel、FatigueModel、GpsStream、Gauss-Markov 噪声、StatsReporter | **模型是否生理可信**——这是唯一真正的技术难点 | 单测：步长/步频/速度恒等式；边界夹取；噪声自相关；10 次不同随机种子的曲线目视比对 |
 | **P2 仿真跑台** | Compose 表单（区间/距离/体重身高）→ 实时仪表盘 + 双曲线 + 轨迹地图 + 语音提示 + 结束导出 JSON/GPX/CSV | 图表与地图首次集成；**无法本地预览 UI** | 真机跑一次仿真，肉眼核对曲线无阶跃、无锁频 |
 | **P3 真跑模式** | 前台服务采真 GPS；峰值检测真实步频；实时对比目标 ↔ 实际并语音修正 | 步频检测在口袋/手持场景鲁棒性差 | 户外实跑 3 次，误差 < ±5 步/分 |

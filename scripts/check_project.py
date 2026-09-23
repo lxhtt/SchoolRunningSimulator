@@ -132,7 +132,7 @@ def main() -> None:
     require("contents: read" in workflow and "contents: write" not in workflow, "Unexpected workflow write permissions")
     require("pull_request_target" not in workflow, "Do not execute untrusted PR code with privileged context")
     require("needs: core" in workflow, "APK job must wait for core tests")
-    require('"platforms;android-37" "build-tools;36.0.0"' in workflow, "CI SDK version drift")
+    require('"platforms;android-36" "build-tools;36.0.0"' in workflow, "CI SDK version drift")
 
     for shell, path in [("sh", "gradlew"), ("bash", "scripts/test-core.sh"), ("bash", "scripts/build-android.sh")]:
         subprocess.run([shell, "-n", str(ROOT / path)], check=True)

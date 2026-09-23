@@ -28,7 +28,7 @@ App 使用 `implementation("dev.ratemock:sim-core:0.1.0")`，由 composite build
 | JVM 字节码目标 | 17 |
 | CI 内核测试 JDK | 17 和 21 |
 | CI Android JDK | 17 |
-| compileSdk / targetSdk / minSdk | 37 / 37 / 26 |
+| compileSdk / targetSdk / minSdk | 36 / 36 / 26 |
 | Android Build Tools | 36.0.0 |
 | Compose BOM | 2025.04.01 |
 | Activity Compose | 1.10.1 |
@@ -36,7 +36,7 @@ App 使用 `implementation("dev.ratemock:sim-core:0.1.0")`，由 composite build
 
 依赖集中在 `gradle/libs.versions.toml`。不配置 JDK 自动下载；输出统一为 Java 17。Gradle Wrapper 和发行包的官方校验值见 `THIRD_PARTY_NOTICES.md`。
 
-Android AGP 9.3.0 官方兼容表要求 Gradle ≥9.5.0、API 37、Build Tools 36.0.0、JDK 17。Kotlin 官方兼容表列 KGP 2.4.20 fully-supported 至 Gradle 9.7.0。用户指定的 9.7.1 是相邻 patch 版本，**首次 CI 必须验证兼容**；不宣称 Kotlin 官方表明确涵盖 9.7.1。AGP 9 已启用 built-in Kotlin，app 只 apply Compose Compiler plugin，不 apply `org.jetbrains.kotlin.android`。
+AGP 9.3.0 的 compatibility table 要求 Gradle ≥9.5.0、Build Tools 36.0.0、JDK 17；API 36 是当前 CI 可用的平台目标。Kotlin 官方兼容表列 KGP 2.4.20 fully-supported 至 Gradle 9.7.0。用户指定的 9.7.1 是相邻 patch 版本，**首次 CI 必须验证兼容**；不宣称 Kotlin 官方表明确涵盖 9.7.1。AGP 9 已启用 built-in Kotlin，app 只 apply Compose Compiler plugin，不 apply `org.jetbrains.kotlin.android`。
 
 核对资料（2026-09-23）：
 
@@ -51,7 +51,7 @@ Android AGP 9.3.0 官方兼容表要求 Gradle ≥9.5.0、API 37、Build Tools 3
 配置文件：`.github/workflows/android.yml`。
 
 1. `core` job 在 JDK 17/21 分别运行静态检查和 14 个内核测试；测试命令移除 Android SDK 环境变量。
-2. 两个内核测试 job 均成功后，`android` job 在 Ubuntu 24.04 runner 上安装 Android API 37 和 Build Tools 36.0.0。
+2. 两个内核测试 job 均成功后，`android` job 在 Ubuntu 24.04 runner 上安装 Android API 36 和 Build Tools 36.0.0。
 3. 运行 `:app:lintDebug :app:assembleDebug`。
 4. 上传 debug APK、SHA-256、JUnit 报告和 lint 报告，保留 7 天。
 
