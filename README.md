@@ -39,6 +39,7 @@ python3 scripts/check_project.py
 - [项目计划](docs/PROJECT_PLAN.md)
 - [构建与验证](docs/BUILD.md)
 - [P0 实施记录](docs/P0-IMPLEMENTATION.md)
+- [P1 内核设计（待评审）](docs/DESIGN-p1-sim-core.md)
 - [探索性定位注入研究笔记](docs/DESIGN-injection-fusion.md)
 
 ## 许可

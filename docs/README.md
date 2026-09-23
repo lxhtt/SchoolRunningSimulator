@@ -5,6 +5,7 @@ Status statements in these documents are snapshots. The latest verified state is
 - [Project plan](PROJECT_PLAN.md) — product scope, staged roadmap, and open risks.
 - [Build and verification](BUILD.md) — toolchain versions, low-bandwidth checks, CI workflow, verified results, and acceptance criteria.
 - [P0 implementation record](P0-IMPLEMENTATION.md) — executed checks with measured results, and what remains.
+- [P1 design: sim-core](DESIGN-p1-sim-core.md) — design under review: feasibility criteria, speed smoothing, route projection, GPS noise, exports, and test mapping. Not implemented yet.
 - [Injection research notes](DESIGN-injection-fusion.md) — exploratory observations only; not an implementation specification or legal advice.
 
 Repository-wide license, attribution, and third-party information is in the root [`LICENSE`](../LICENSE), [`CREDITS.md`](../CREDITS.md), and [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
