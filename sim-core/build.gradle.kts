@@ -3,10 +3,16 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.kotlin.jvm)
     `java-library`
+    application
+}
+
+application {
+    mainClass.set("dev.ratemock.core.cli.MainKt")
 }
 
 group = "dev.ratemock"
 version = "0.1.0"
+
 
 // Use the installed JDK (17 or 21), without provisioning another JDK.
 java {
