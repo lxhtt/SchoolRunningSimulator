@@ -32,6 +32,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import dev.ratemock.app.recording.RecorderService
 import dev.ratemock.app.ui.RateMockTheme
 import dev.ratemock.core.GaitKinematics
 
@@ -44,11 +45,11 @@ class MainActivity : ComponentActivity() {
                 BuildVerificationScreen(
                     onRequestPermissions = { requestRecordingPermissions() },
                     onStartRecording = {
-                        val intent = Intent(this, recording.RecorderService::class.java).setAction(recording.RecorderService.ACTION_START)
+                        val intent = Intent(this, RecorderService::class.java).setAction(RecorderService.ACTION_START)
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
                     },
                     onStopRecording = {
-                        startService(Intent(this, recording.RecorderService::class.java).setAction(recording.RecorderService.ACTION_STOP))
+                        startService(Intent(this, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
                     },
                 )
             }
