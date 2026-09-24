@@ -49,7 +49,7 @@ class GaitEngine(
         }
         val speedSample = speedPlanner.advance(targetSpeed, stepSeconds)
         val gait = gaitResolver.resolveTransient(speedSample.speedMps)
-        val movedMeters = speedSample.speedMps * stepSeconds
+        val movedMeters = if (paused) 0.0 else speedSample.speedMps * stepSeconds
         timeSeconds += stepSeconds
 
         if (!paused && !stopping) {
