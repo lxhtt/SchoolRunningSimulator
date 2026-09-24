@@ -164,6 +164,7 @@ private data class RecorderUiSnapshot(
     val active: Boolean,
     val fileName: String,
     val sampleCount: Int,
+    val heartbeatAgeMs: Long,
     val latest: String,
     val logs: List<String>,
 )
@@ -188,6 +189,7 @@ private fun RecorderPanel(context: Context) {
             )
             Text(stringResource(R.string.recorder_file, snapshot.fileName))
             Text(stringResource(R.string.recorder_samples, snapshot.sampleCount))
+            Text(stringResource(R.string.recorder_heartbeat, snapshot.heartbeatAgeMs / 1_000L))
             Text(stringResource(R.string.recorder_latest), style = MaterialTheme.typography.labelLarge)
             Text(snapshot.latest, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
             Text(stringResource(R.string.recorder_log_title), style = MaterialTheme.typography.labelLarge)
@@ -216,6 +218,7 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
         active = active,
         fileName = file?.name ?: context.getString(R.string.recorder_no_file),
         sampleCount = data.size,
+        heartbeatAgeMs = if (heartbeat == 0L) Long.MAX_VALUE else (System.currentTimeMillis() - heartbeat).coerceAtLeast(0L),
         latest = data.lastOrNull() ?: context.getString(R.string.recorder_no_data),
         logs = data.takeLast(20),
     )
