@@ -22,6 +22,9 @@
     <string name="recorder_file">当前文件：%1$s</string>
     <string name="recorder_samples">GPS 样本数：%1$d</string>
     <string name="recorder_heartbeat">服务心跳：%1$d 秒前</string>
+    <string name="recorder_no_heartbeat">服务心跳：暂无</string>
+    <string name="recorder_summary">录制摘要：%1$d 个样本，持续 %2$.1f 秒，步数计数变化 %3$.0f</string>
+    <string name="recorder_no_summary">录制摘要：暂无数据</string>
     <string name="recorder_latest">最近一条记录</string>
     <string name="recorder_log_title">最近 20 条日志</string>
     <string name="recorder_no_logs">暂无记录。点击“开始记录”后等待 GPS 样本。</string>

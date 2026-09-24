@@ -166,7 +166,8 @@ private data class RecorderUiSnapshot(
     val active: Boolean,
     val fileName: String,
     val sampleCount: Int,
-    val heartbeatAgeMs: Long,
+    val heartbeatAgeMs: Long?,
+    val summary: String,
     val latest: String,
     val logs: List<String>,
 )
@@ -191,7 +192,11 @@ private fun RecorderPanel(context: Context) {
             )
             Text(stringResource(R.string.recorder_file, snapshot.fileName))
             Text(stringResource(R.string.recorder_samples, snapshot.sampleCount))
-            Text(stringResource(R.string.recorder_heartbeat, snapshot.heartbeatAgeMs / 1_000L))
+            Text(
+                snapshot.heartbeatAgeMs?.let { age -> stringResource(R.string.recorder_heartbeat, age / 1_000L) }
+                    ?: stringResource(R.string.recorder_no_heartbeat),
+            )
+            Text(snapshot.summary)
             Text(stringResource(R.string.recorder_latest), style = MaterialTheme.typography.labelLarge)
             Text(snapshot.latest, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
             Text(stringResource(R.string.recorder_log_title), style = MaterialTheme.typography.labelLarge)
@@ -215,6 +220,10 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
     val active = preferences.getBoolean(RecorderService.KEY_ACTIVE, false) &&
         System.currentTimeMillis() - heartbeat < 3_000L
     var sampleCount = 0
+    var firstElapsed = 0.0
+    var lastElapsed = 0.0
+    var firstStep: Double? = null
+    var lastStep: Double? = null
     var latest = context.getString(R.string.recorder_no_data)
     val recent = ArrayDeque<String>()
     file?.runCatching {
@@ -222,6 +231,13 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
             lines.drop(1).forEach { line ->
                 if (line.isBlank()) return@forEach
                 sampleCount += 1
+                val columns = line.split(',')
+                val elapsed = columns.getOrNull(1)?.toDoubleOrNull() ?: 0.0
+                val steps = columns.getOrNull(7)?.toDoubleOrNull()
+                if (sampleCount == 1) firstElapsed = elapsed
+                lastElapsed = elapsed
+                if (sampleCount == 1) firstStep = steps
+                lastStep = steps
                 latest = line
                 recent.addLast(line)
                 if (recent.size > 20) recent.removeFirst()
@@ -232,7 +248,17 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
         active = active,
         fileName = file?.name ?: context.getString(R.string.recorder_no_file),
         sampleCount = sampleCount,
-        heartbeatAgeMs = if (heartbeat == 0L) Long.MAX_VALUE else (System.currentTimeMillis() - heartbeat).coerceAtLeast(0L),
+        heartbeatAgeMs = if (heartbeat == 0L) null else (System.currentTimeMillis() - heartbeat).coerceAtLeast(0L),
+        summary = if (sampleCount == 0) {
+            context.getString(R.string.recorder_no_summary)
+        } else {
+            context.getString(
+                R.string.recorder_summary,
+                sampleCount,
+                (lastElapsed - firstElapsed).coerceAtLeast(0.0),
+                ((lastStep ?: firstStep ?: 0.0) - (firstStep ?: lastStep ?: 0.0)).coerceAtLeast(0.0),
+            )
+        },
         latest = latest,
         logs = recent.toList(),
     )
