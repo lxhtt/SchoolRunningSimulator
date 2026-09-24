@@ -39,7 +39,7 @@
 
 P1 较大，按可单独验收的切片推进，每片都可以单独跑 CI。
 
-> S1–S6 已完成并通过 run `35997808042`；下一个实现切片是 S7：Android 前台服务记录器。
+> S1–S7 代码已完成并通过 run `35999139396` 的编译/lint/APK 验证；S7 的定位、步数权限和息屏行为仍需真机验收。
 
 | 切片 | 内容 | 验收 |
 |---|---|---|
@@ -71,6 +71,7 @@ S1 已落地并由 GitHub Actions run [`35958878288`](https://github.com/lxhtt/S
 - `ExportWriter` 与最小 CLI：可将一次确定性示例仿真写入完整输出目录；CLI 入口为 `dev.ratemock.core.cli.MainKt`。
 - `CalibrationCsvParser`、`CalibrationFitter`：校验至少 8 条、速度跨度和正权重，支持幂律/线性加权最小二乘、R²、残差和拟合速度范围。
 - `CalibrationJson` 与 CLI `calibrate` 子命令：输出参数来源范围和 `uncalibrated=false` 标记，超出拟合范围可由调用方显式警告。
+- S7 `RecorderService`：Android 前台 `location` 服务，同时记录 GPS 和 `TYPE_STEP_COUNTER`，CSV 写入 app 私有 `recordings/` 目录；界面提供权限申请、开始/停止控制。实现已通过云端 Android lint/debug APK 构建，尚未完成真机测试。
 - 测试报告：`GaitLimitsTest` 4、`GaitKinematicsTest` 14、`FeasibilitySolverTest` 12、`CadencePolicyTest` 7、`GaitResolverTest` 13、`RunPlanTest` 5、`SpeedPlannerTest` 7、`TruthTypesTest` 1、`GaitEngineTest` 7、`RouteTest` 4、`GaussMarkovNoiseTest` 5、`ExportersTest` 4、`CalibrationTest` 7，共 **90/90 通过**；JDK 17 与 JDK 21 结果一致。
 - 同一 workflow 的 Android lint 与 debug APK job 也通过；S1 没有增加 Android 权限或改变 P0 APK 行为。
 
