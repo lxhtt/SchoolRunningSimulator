@@ -96,7 +96,18 @@ def main() -> None:
         require(not re.search(r"^import (android\.|androidx\.)", path.read_text(), re.M), f"Android import in {path}")
 
     manifest = ET.fromstring(text("app/src/main/AndroidManifest.xml"))
-    require(not manifest.findall("uses-permission"), "P0 must not request runtime permissions")
+    permissions = {element.attrib.get(ANDROID + "name") for element in manifest.findall("uses-permission")}
+    require(
+        {
+            "android.permission.ACCESS_COARSE_LOCATION",
+            "android.permission.ACCESS_FINE_LOCATION",
+            "android.permission.ACTIVITY_RECOGNITION",
+            "android.permission.FOREGROUND_SERVICE",
+            "android.permission.FOREGROUND_SERVICE_LOCATION",
+            "android.permission.POST_NOTIFICATIONS",
+        }.issubset(permissions),
+        "S7 recorder permissions are incomplete",
+    )
     activity = manifest.find("application/activity")
     require(activity is not None, "Missing launcher activity")
     require(activity.attrib[ANDROID + "name"] == ".MainActivity", "Wrong launcher class")

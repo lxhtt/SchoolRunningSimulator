@@ -3,12 +3,17 @@
     <string name="app_name">RateMock</string>
     <string name="build_stage">P0 · 构建验证</string>
     <string name="screen_title">从每一步开始</string>
-    <string name="screen_description">步频仿真引擎已接入。当前是工程验证版，尚未开始采集 GPS 或生成跑步数据。</string>
+    <string name="screen_description">步频仿真引擎与可选记录器已接入。记录器只在你明确授权并启动后采集 GPS 与步数。</string>
     <string name="sample_title">运动学演示 · 非实测</string>
     <string name="sample_inputs">步频 180 步/分\n单步长度 0.90 米/步</string>
     <string name="speed_result">%1$.2f 米/秒</string>
     <string name="speed_label">对应前进速度</string>
     <string name="speed_formula">v = 步频 × 单步长度 ÷ 60</string>
-    <string name="next_phase">下一阶段：区间约束、步态模型与可重复仿真。</string>
-    <string name="privacy_note">本版本不申请定位权限，也不会修改系统定位。</string>
+    <string name="next_phase">下一阶段：继续完善仿真数据与校准工具。</string>
+    <string name="privacy_note">记录器写入应用私有目录；停止后可通过 adb 或应用文件管理方式取出 CSV。不会修改系统定位，也不执行定位注入。</string>
+    <string name="recorder_title">实跑记录器 · S7</string>
+    <string name="recorder_description">前台服务可在息屏时记录 GPS 和累计步数。首次使用请授予定位、活动识别和通知权限。</string>
+    <string name="recorder_permissions">申请记录权限</string>
+    <string name="recorder_start">开始记录</string>
+    <string name="recorder_stop">停止记录</string>
 </resources>
