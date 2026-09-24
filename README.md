@@ -29,7 +29,7 @@ python3 scripts/check_project.py
 
 ## 模型边界
 
-`stepLength` 是每一步的前进距离，不等于完整左右脚循环的 `stride length`。GPS 速度不能单独、唯一确定步频。当前内核只做运动学换算；个体校准、仿真轨迹、GPS 观测噪声及传感器建模均未实现。产品阶段和风险说明见 [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)。
+`stepLength` 是每一步的前进距离，不等于完整左右脚循环的 `stride length`。GPS 速度不能单独、唯一确定步频。P1 独立内核已包含运动计划、步态仿真、GPS 观测与校准拟合；Apple Health 数据可在本机提取为步行和跑步两份探索性样本，并由内核按目标速度自动选择对应模型。个人拟合尚未通过充分实跑验证，也尚未接入当前 P0 应用界面。产品阶段和风险说明见 [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)。
 
 本项目不保证与任何第三方应用、校园跑平台或设备兼容，也不承诺绕过第三方服务的检测或规则。研究笔记不是已实现功能说明：[`docs/DESIGN-injection-fusion.md`](docs/DESIGN-injection-fusion.md)。
 
@@ -39,7 +39,7 @@ python3 scripts/check_project.py
 - [项目计划](docs/PROJECT_PLAN.md)
 - [构建与验证](docs/BUILD.md)
 - [P0 实施记录](docs/P0-IMPLEMENTATION.md)
-- [P1 内核设计（待评审）](docs/DESIGN-p1-sim-core.md)
+- [P1 内核设计与校准说明](docs/DESIGN-p1-sim-core.md)
 - [探索性定位注入研究笔记](docs/DESIGN-injection-fusion.md)
 
 ## 许可

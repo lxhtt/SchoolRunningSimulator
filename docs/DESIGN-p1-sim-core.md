@@ -1,6 +1,6 @@
 # P1 设计：`sim-core` 仿真内核
 
-> 状态：S1 已实现并通过云端验证；S2–S7 仍是设计/待实现。
+> 状态：S1–S6 已实现并通过云端测试；S7 记录器已在真机验证持续写入，完整室外息屏验收仍需更多数据。Apple Health 本机提取器与内核自动选档已实现，个人样本目前仅供探索性拟合。
 > 本文持续作为 P1 的设计基线；已实现代码以 `sim-core/src/main/kotlin/dev/ratemock/core/feasibility/` 为准。
 > 前置：P0 已通过云端实测（run `35848681022`：JDK 17/21 单测 14/14、lint、debug APK）。S1 验证 run：[`35958878288`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/35958878288)。
 
