@@ -39,7 +39,7 @@
 
 P1 较大，按可单独验收的切片推进，每片都可以单独跑 CI。
 
-> S1、S2、S3 已完成并通过 run `35993782125`；下一个实现切片是 S4：路线、投影与 GPS 噪声。
+> S1、S2、S3、S4 已完成并通过 run `35994546542`；下一个实现切片是 S5：导出格式与最小 CLI。
 
 | 切片 | 内容 | 验收 |
 |---|---|---|
@@ -65,7 +65,9 @@ S1 已落地并由 GitHub Actions run [`35958878288`](https://github.com/lxhtt/S
 - `SpeedPlanner`：固定步长下的因果速度规划，限制加速度和 jerk；到达静止边界时显式报告 `terminalReset`。
 - `TruthSample`、`StepEvent`：真值连续采样与离散步事件，带单位字段和状态校验。
 - `GaitEngine`：确定性单线程推进，支持时间/距离段、暂停、停止和步事件累积；瞬态速度使用独立解析路径，稳态解析仍保持严格可行域校验。
-- 测试报告：`GaitLimitsTest` 4、`GaitKinematicsTest` 14、`FeasibilitySolverTest` 12、`CadencePolicyTest` 7、`GaitResolverTest` 13、`RunPlanTest` 5、`SpeedPlannerTest` 7、`TruthTypesTest` 1、`GaitEngineTest` 7，共 **70/70 通过**；JDK 17 与 JDK 21 结果一致。
+- `Route`、`RouteProjector`：短距离等距圆柱局部米制坐标、折线线性投影、ONE_WAY/OUT_AND_BACK/LOOP 路线模式和方位角。
+- `GaussMarkovNoise`：带种子的三轴一阶 AR(1) GPS 位置噪声，支持重置并保持稳定方差。
+- 测试报告：`GaitLimitsTest` 4、`GaitKinematicsTest` 14、`FeasibilitySolverTest` 12、`CadencePolicyTest` 7、`GaitResolverTest` 13、`RunPlanTest` 5、`SpeedPlannerTest` 7、`TruthTypesTest` 1、`GaitEngineTest` 7、`RouteTest` 4、`GaussMarkovNoiseTest` 5，共 **79/79 通过**；JDK 17 与 JDK 21 结果一致。
 - 同一 workflow 的 Android lint 与 debug APK job 也通过；S1 没有增加 Android 权限或改变 P0 APK 行为。
 
 ## 2. 数学基础（可行性判据）
