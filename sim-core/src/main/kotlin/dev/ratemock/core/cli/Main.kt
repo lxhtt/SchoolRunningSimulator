@@ -1,5 +1,9 @@
 package dev.ratemock.core.cli
 
+import dev.ratemock.core.calibration.CalibrationCsvParser
+import dev.ratemock.core.calibration.CalibrationFitter
+import dev.ratemock.core.calibration.CalibrationJson
+import dev.ratemock.core.calibration.CalibrationModel
 import dev.ratemock.core.export.ExportWriter
 import dev.ratemock.core.export.GpsObservationBuilder
 import dev.ratemock.core.feasibility.FixedCadence
@@ -15,11 +19,24 @@ import dev.ratemock.core.route.GaussMarkovNoise
 import dev.ratemock.core.route.GeoPoint
 import dev.ratemock.core.route.Route
 import dev.ratemock.core.truth.GaitEngine
+import java.nio.file.Files
 import java.nio.file.Path
 
-/** Minimal dependency-free CLI: `gradle :sim-core:run --args='--out build/ratemock-output'`. */
+/**
+ * Dependency-free CLI:
+ * `gradle :sim-core:run --args='--out build/ratemock-output'`
+ * or `gradle :sim-core:run --args='calibrate --input data.csv --out calibration.json --model power'`.
+ */
 fun main(args: Array<String>) {
-    val output = parseOutput(args)
+    if (args.firstOrNull() == "calibrate") {
+        calibrate(args.drop(1))
+    } else {
+        simulate(args)
+    }
+}
+
+private fun simulate(args: Array<String>) {
+    val output = requiredPath(args.toList(), "--out")
     val route = Route(
         listOf(
             GeoPoint(35.000000, 139.000000),
@@ -43,10 +60,26 @@ fun main(args: Array<String>) {
     println("RateMock export complete: ${frames.size} truth samples, ${frames.flatMap { it.steps }.size} steps -> $output")
 }
 
-private fun parseOutput(args: Array<String>): Path {
-    val index = args.indexOf("--out")
-    require(index >= 0 && index + 1 < args.size) {
-        "Usage: --out <directory>"
+private fun calibrate(args: List<String>) {
+    val input = requiredPath(args, "--input")
+    val output = requiredPath(args, "--out")
+    val model = when (args.option("--model")?.lowercase()) {
+        null, "power", "power_law" -> CalibrationModel.POWER_LAW
+        "linear" -> CalibrationModel.LINEAR
+        else -> error("--model must be power or linear")
     }
+    val fit = CalibrationFitter.fit(CalibrationCsvParser.parse(input), model)
+    Files.writeString(output, CalibrationJson.render(fit))
+    println("RateMock calibration complete: ${fit.model} R²=${fit.rSquared} -> $output")
+}
+
+private fun requiredPath(args: List<String>, option: String): Path {
+    val index = args.indexOf(option)
+    require(index >= 0 && index + 1 < args.size) { "Missing $option" }
     return Path.of(args[index + 1])
+}
+
+private fun List<String>.option(option: String): String? {
+    val index = indexOf(option)
+    return if (index >= 0 && index + 1 < size) this[index + 1] else null
 }
