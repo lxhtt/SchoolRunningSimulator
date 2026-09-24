@@ -37,6 +37,27 @@ class GaitResolver(
     private val reachable = FeasibilitySolver.reachableSpeedRange(limits)
 
     /**
+     * Resolves a non-negative speed during an acceleration/deceleration
+     * transient. Stable speeds retain [resolve]'s strict reachable-range
+     * contract; transient speeds use a boundary cadence and derive the step
+     * length so the kinematic identity remains exact.
+     */
+    fun resolveTransient(speedMps: Double): GaitSample {
+        FeasibilitySolver.requireNonNegativeSpeed(speedMps)
+        if (speedMps == 0.0) return resolve(0.0)
+        val reachableSpeed = speedMps.coerceIn(reachable.start, reachable.endInclusive)
+        val boundary = resolve(reachableSpeed)
+        val stepLengthMeters = GaitKinematics.stepLengthMeters(speedMps, boundary.cadenceSpm)
+        return GaitSample(
+            speedMps = speedMps,
+            modelCadenceSpm = boundary.modelCadenceSpm,
+            cadenceSpm = boundary.cadenceSpm,
+            stepLengthMeters = stepLengthMeters,
+            clamped = true,
+        )
+    }
+
+    /**
      * Resolves [speedMps]. Exactly zero returns the stationary convention
      * `(0, 0, 0)`, which is outside the steady-locomotion ranges by design.
      */

@@ -48,7 +48,7 @@ class GaitEngine(
             else -> plan.segments[segmentIndex].targetSpeedMps
         }
         val speedSample = speedPlanner.advance(targetSpeed, stepSeconds)
-        val gait = gaitResolver.resolve(speedSample.speedMps)
+        val gait = gaitResolver.resolveTransient(speedSample.speedMps)
         val movedMeters = speedSample.speedMps * stepSeconds
         timeSeconds += stepSeconds
 
