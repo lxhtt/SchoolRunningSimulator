@@ -15,6 +15,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import dev.ratemock.app.R
@@ -31,6 +32,16 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     private var latestStepCounter: Float? = null
     private var recordingFile: File? = null
     private var recordingStartedAtMs: Long = 0L
+    private val heartbeatHandler = Handler(Looper.getMainLooper())
+    private val heartbeat = object : Runnable {
+        override fun run() {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean(KEY_ACTIVE, true)
+                .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
+                .apply()
+            heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -65,6 +76,11 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
             it.appendLine("timestamp_utc,elapsed_s,latitude_deg,longitude_deg,altitude_m,horizontal_accuracy_m,speed_mps,step_counter_total")
             it.flush()
         }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putBoolean(KEY_ACTIVE, true)
+            .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
+            .apply()
+        heartbeatHandler.post(heartbeat)
         val stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         if (stepSensor != null && hasActivityPermission()) {
             sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_NORMAL)
@@ -91,6 +107,11 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         latestStepCounter = null
         recordingFile = null
         recordingStartedAtMs = 0L
+        heartbeatHandler.removeCallbacks(heartbeat)
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putBoolean(KEY_ACTIVE, false)
+            .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
+            .apply()
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
@@ -153,6 +174,10 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     companion object {
         const val ACTION_START = "dev.ratemock.app.recording.START"
         const val ACTION_STOP = "dev.ratemock.app.recording.STOP"
+        private const val HEARTBEAT_INTERVAL_MS = 1_000L
+        private const val PREFS = "recorder_status"
+        const val KEY_ACTIVE = "active"
+        const val KEY_HEARTBEAT_MS = "heartbeat_ms"
         private const val CHANNEL_ID = "ratemock-recording"
         private const val NOTIFICATION_ID = 1001
         private const val LOCATION_INTERVAL_MS = 1_000L

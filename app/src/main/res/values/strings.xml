@@ -16,4 +16,14 @@
     <string name="recorder_permissions">申请记录权限</string>
     <string name="recorder_start">开始记录</string>
     <string name="recorder_stop">停止记录</string>
+    <string name="recorder_status_title">实时记录状态</string>
+    <string name="recorder_status_active">● 正在记录</string>
+    <string name="recorder_status_inactive">○ 未在记录</string>
+    <string name="recorder_file">当前文件：%1$s</string>
+    <string name="recorder_samples">GPS 样本数：%1$d</string>
+    <string name="recorder_latest">最近一条记录</string>
+    <string name="recorder_log_title">最近 20 条日志</string>
+    <string name="recorder_no_logs">暂无记录。点击“开始记录”后等待 GPS 样本。</string>
+    <string name="recorder_no_file">尚未创建</string>
+    <string name="recorder_no_data">暂无 GPS 数据</string>
 </resources>
