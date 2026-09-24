@@ -42,7 +42,9 @@ import androidx.compose.ui.unit.dp
 import dev.ratemock.app.recording.RecorderService
 import dev.ratemock.app.ui.RateMockTheme
 import dev.ratemock.core.GaitKinematics
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -174,7 +176,7 @@ private fun RecorderPanel(context: Context) {
     var snapshot by remember { mutableStateOf(readRecorderSnapshot(context)) }
     LaunchedEffect(context) {
         while (true) {
-            snapshot = readRecorderSnapshot(context)
+            snapshot = withContext(Dispatchers.IO) { readRecorderSnapshot(context) }
             delay(1_000)
         }
     }
@@ -208,18 +210,30 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
     val directory = File(context.filesDir, "recordings")
     val file = directory.listFiles { candidate -> candidate.extension == "csv" }
         ?.maxByOrNull { it.lastModified() }
-    val lines = file?.runCatching { readLines() }?.getOrDefault(emptyList()).orEmpty()
     val preferences = context.getSharedPreferences("recorder_status", Context.MODE_PRIVATE)
     val heartbeat = preferences.getLong(RecorderService.KEY_HEARTBEAT_MS, 0L)
     val active = preferences.getBoolean(RecorderService.KEY_ACTIVE, false) &&
         System.currentTimeMillis() - heartbeat < 3_000L
-    val data = lines.drop(1)
+    var sampleCount = 0
+    var latest = context.getString(R.string.recorder_no_data)
+    val recent = ArrayDeque<String>()
+    file?.runCatching {
+        bufferedReader().useLines { lines ->
+            lines.drop(1).forEach { line ->
+                if (line.isBlank()) return@forEach
+                sampleCount += 1
+                latest = line
+                recent.addLast(line)
+                if (recent.size > 20) recent.removeFirst()
+            }
+        }
+    }
     return RecorderUiSnapshot(
         active = active,
         fileName = file?.name ?: context.getString(R.string.recorder_no_file),
-        sampleCount = data.size,
+        sampleCount = sampleCount,
         heartbeatAgeMs = if (heartbeat == 0L) Long.MAX_VALUE else (System.currentTimeMillis() - heartbeat).coerceAtLeast(0L),
-        latest = data.lastOrNull() ?: context.getString(R.string.recorder_no_data),
-        logs = data.takeLast(20),
+        latest = latest,
+        logs = recent.toList(),
     )
 }

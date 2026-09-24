@@ -16,6 +16,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import dev.ratemock.app.R
@@ -30,9 +31,19 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     private lateinit var sensorManager: SensorManager
     private var writer: BufferedWriter? = null
     private var latestStepCounter: Float? = null
+    private var latestLocation: Location? = null
     private var recordingFile: File? = null
     private var recordingStartedAtMs: Long = 0L
     private val heartbeatHandler = Handler(Looper.getMainLooper())
+    private val callbackThread = HandlerThread("RecorderCallbacks")
+    private lateinit var callbackHandler: Handler
+    private val writerLock = Any()
+    private val sampleTicker = object : Runnable {
+        override fun run() {
+            writeSample()
+            if (writer != null) callbackHandler.postDelayed(this, LOCATION_INTERVAL_MS)
+        }
+    }
     private val heartbeat = object : Runnable {
         override fun run() {
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -48,6 +59,8 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         locationManager = getSystemService(LocationManager::class.java)
         sensorManager = getSystemService(SensorManager::class.java)
         createNotificationChannel()
+        callbackThread.start()
+        callbackHandler = Handler(callbackThread.looper)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -81,9 +94,10 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
             .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
             .apply()
         heartbeatHandler.post(heartbeat)
+        callbackHandler.post(sampleTicker)
         val stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         if (stepSensor != null && hasActivityPermission()) {
-            sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_NORMAL)
+            sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_NORMAL, callbackHandler)
         }
         try {
             locationManager.requestLocationUpdates(
@@ -91,7 +105,7 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
                 LOCATION_INTERVAL_MS,
                 0f,
                 this,
-                Looper.getMainLooper(),
+                callbackThread.looper,
             )
         } catch (_: SecurityException) {
             stopRecording()
@@ -100,11 +114,15 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
 
     private fun stopRecording() {
         runCatching { locationManager.removeUpdates(this) }
+        callbackHandler.removeCallbacks(sampleTicker)
         sensorManager.unregisterListener(this)
-        writer?.flush()
-        writer?.close()
-        writer = null
+        synchronized(writerLock) {
+            writer?.flush()
+            writer?.close()
+            writer = null
+        }
         latestStepCounter = null
+        latestLocation = null
         recordingFile = null
         recordingStartedAtMs = 0L
         heartbeatHandler.removeCallbacks(heartbeat)
@@ -116,23 +134,29 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     }
 
     override fun onLocationChanged(location: Location) {
-        val out = writer ?: return
+        latestLocation = Location(location)
+    }
+
+    private fun writeSample() {
+        val location = latestLocation ?: return
         val now = System.currentTimeMillis()
         val timestamp = Instant.ofEpochMilli(now).toString()
         val elapsed = (now - recordingStartedAtMs) / 1000.0
-        out.appendLine(
-            listOf(
-                timestamp,
-                elapsed,
-                location.latitude,
-                location.longitude,
-                if (location.hasAltitude()) location.altitude else "",
-                if (location.hasAccuracy()) location.accuracy else "",
-                if (location.hasSpeed()) location.speed else "",
-                latestStepCounter ?: "",
-            ).joinToString(","),
-        )
-        out.flush()
+        val row = listOf(
+            timestamp,
+            elapsed,
+            location.latitude,
+            location.longitude,
+            if (location.hasAltitude()) location.altitude else "",
+            if (location.hasAccuracy()) location.accuracy else "",
+            if (location.hasSpeed()) location.speed else "",
+            latestStepCounter ?: "",
+        ).joinToString(",")
+        synchronized(writerLock) {
+            val out = writer ?: return
+            out.appendLine(row)
+            out.flush()
+        }
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -145,6 +169,7 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
 
     override fun onDestroy() {
         stopRecording()
+        callbackThread.quitSafely()
         super.onDestroy()
     }
 
