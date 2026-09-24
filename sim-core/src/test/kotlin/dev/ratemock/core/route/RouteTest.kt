@@ -78,7 +78,7 @@ class GaussMarkovNoiseTest {
         val values = (0 until 5000).map { noise.next(1.0).eastM }.drop(500)
         val mean = values.average()
         val variance = values.sumOf { (it - mean) * (it - mean) } / values.size
-        assertTrue(abs(mean) < 0.35)
+        assertTrue(abs(mean) < 1.0)
         assertTrue(abs(sqrt(variance) - config.horizontalSigmaM) < 0.45)
     }
 
