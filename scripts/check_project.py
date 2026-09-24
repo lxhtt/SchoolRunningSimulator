@@ -144,11 +144,17 @@ def main() -> None:
         result = subprocess.run(["bash", str(ROOT / path)], cwd=ROOT, env=env, capture_output=True, text=True, timeout=5)
         require(result.returncode == 2 and "disabled" in result.stderr, f"Local download guard failed: {path}")
 
-    tests = text("sim-core/src/test/kotlin/dev/ratemock/core/GaitKinematicsTest.kt")
-    test_count = len(re.findall(r"^\s*@Test\s*$", tests, re.M))
-    require(test_count == 14, "Update P0 test inventory after changing the tests")
+    p0_tests = text("sim-core/src/test/kotlin/dev/ratemock/core/GaitKinematicsTest.kt")
+    p0_test_count = len(re.findall(r"^\s*@Test\s*$", p0_tests, re.M))
+    require(p0_test_count == 14, "P0 GaitKinematics test inventory changed")
+    all_tests = list((ROOT / "sim-core/src/test").rglob("*.kt"))
+    total_test_count = sum(
+        len(re.findall(r"^\s*@Test\s*$", path.read_text(), re.M))
+        for path in all_tests
+    )
+    require(total_test_count >= p0_test_count, "Invalid Kotlin test inventory")
     print(f"PASS: {CHECKS} offline structural checks; XML/TOML, aliases, wrapper, scripts and download guards.")
-    print(f"Found {test_count} Kotlin test definitions; Kotlin compilation/JUnit/Android lint were NOT executed.")
+    print(f"Found {total_test_count} Kotlin test definitions ({p0_test_count} P0 baseline); Kotlin compilation/JUnit/Android lint were NOT executed.")
     print("This checker did not invoke Gradle or access the network.")
 
 
