@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -24,12 +25,16 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,8 +45,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import dev.ratemock.app.recording.RecorderService
+import dev.ratemock.app.simulation.SimulatorScreen
+import dev.ratemock.app.simulation.SimulatorService
 import dev.ratemock.app.ui.RateMockTheme
-import dev.ratemock.core.GaitKinematics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -53,19 +59,56 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             RateMockTheme {
-                BuildVerificationScreen(
-                    onRequestPermissions = { requestRecordingPermissions() },
-                    onStartRecording = {
-                        val intent = Intent(this, RecorderService::class.java).setAction(RecorderService.ACTION_START)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-                    },
-                    onStopRecording = {
-                        startService(Intent(this, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
-                    },
-                )
+                var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+                Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+                    TabRow(selectedTabIndex = selectedTab) {
+                        Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(stringResource(R.string.sim_tab)) })
+                        Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(stringResource(R.string.record_tab)) })
+                    }
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (selectedTab == 0) {
+                            SimulatorScreen(
+                                onStart = { speed, duration -> startSimulation(speed, duration) },
+                                onCommand = { action ->
+                                    runCatching { startService(Intent(this@MainActivity, SimulatorService::class.java).setAction(action)) }
+                                },
+                                onRequestNotification = { requestSimulationNotification() },
+                            )
+                        } else {
+                            RecorderScreen(
+                                onRequestPermissions = { requestRecordingPermissions() },
+                                onStartRecording = {
+                                    val intent = Intent(this@MainActivity, RecorderService::class.java).setAction(RecorderService.ACTION_START)
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+                                },
+                                onStopRecording = {
+                                    startService(Intent(this@MainActivity, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
+                                },
+                            )
+                        }
+                    }
+                }
             }
         }
     }
+
+    private fun startSimulation(speed: Double, duration: Double): Boolean = runCatching {
+        val intent = Intent(this, SimulatorService::class.java)
+            .setAction(SimulatorService.ACTION_START)
+            .putExtra(SimulatorService.EXTRA_SPEED_MPS, speed)
+            .putExtra(SimulatorService.EXTRA_DURATION_SECONDS, duration)
+        startForegroundService(intent)
+    }.isSuccess
+
+    private fun requestSimulationNotification() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private val notificationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
 
     private fun requestRecordingPermissions() {
         val permissions = buildList {
@@ -84,17 +127,15 @@ class MainActivity : ComponentActivity() {
 
 
 @Composable
-private fun BuildVerificationScreen(
+private fun RecorderScreen(
     onRequestPermissions: () -> Unit,
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit,
 ) {
     val context = LocalContext.current
-    // Explicit sample inputs: not a measurement or a recommended running cadence.
-    val speed = GaitKinematics.speedMetersPerSecond(180.0, 0.9)
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(
-            modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+            modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.TopCenter,
         ) {
             Column(
@@ -105,41 +146,17 @@ private fun BuildVerificationScreen(
                     .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
-                Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge)
                 Text(
-                    stringResource(R.string.build_stage),
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
-                )
-                Text(
-                    stringResource(R.string.screen_title),
+                    stringResource(R.string.recorder_title),
                     modifier = Modifier.semantics { heading() },
-                    style = MaterialTheme.typography.headlineLarge,
+                    style = MaterialTheme.typography.headlineMedium,
                 )
-                Text(stringResource(R.string.screen_description), style = MaterialTheme.typography.bodyLarge)
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.padding(24.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        Text(stringResource(R.string.sample_title), style = MaterialTheme.typography.titleMedium)
-                        Text(stringResource(R.string.sample_inputs), style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            stringResource(R.string.speed_result, speed),
-                            style = MaterialTheme.typography.headlineLarge.copy(fontFamily = FontFamily.Monospace),
-                        )
-                        Text(stringResource(R.string.speed_label), style = MaterialTheme.typography.labelLarge)
-                        Text(stringResource(R.string.speed_formula), style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-                Text(stringResource(R.string.next_phase), style = MaterialTheme.typography.bodyLarge)
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.recorder_description), style = MaterialTheme.typography.bodyMedium)
+                Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
                     Column(
                         modifier = Modifier.padding(24.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text(stringResource(R.string.recorder_title), style = MaterialTheme.typography.titleMedium)
-                        Text(stringResource(R.string.recorder_description), style = MaterialTheme.typography.bodyMedium)
                         Button(onClick = onRequestPermissions, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.recorder_permissions))
                         }
@@ -181,7 +198,7 @@ private fun RecorderPanel(context: Context) {
             delay(1_000)
         }
     }
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
         Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(stringResource(R.string.recorder_status_title), style = MaterialTheme.typography.titleMedium)
             Text(

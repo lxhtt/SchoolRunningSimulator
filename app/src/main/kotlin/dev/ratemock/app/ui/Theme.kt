@@ -9,27 +9,29 @@ import androidx.compose.ui.graphics.Color
 
 // A quiet instrument-panel palette; no network fonts or decorative animation.
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF174C63),
+    primary = Color(0xFF126B59),
     onPrimary = Color.White,
-    background = Color(0xFFF2F6F8),
-    onBackground = Color(0xFF172D37),
-    surface = Color(0xFFF2F6F8),
-    onSurface = Color(0xFF172D37),
-    surfaceVariant = Color(0xFFDCE7ED),
-    onSurfaceVariant = Color(0xFF354D59),
-    surfaceContainerHighest = Color(0xFFDCE7ED),
+    secondary = Color(0xFFB14C38),
+    background = Color(0xFFF5F7F6),
+    onBackground = Color(0xFF19312B),
+    surface = Color(0xFFF5F7F6),
+    onSurface = Color(0xFF19312B),
+    surfaceVariant = Color(0xFFDCE9E1),
+    onSurfaceVariant = Color(0xFF42594D),
+    surfaceContainerHighest = Color(0xFFE4ECE6),
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFA7D3EA),
-    onPrimary = Color(0xFF103545),
-    background = Color(0xFF10191D),
-    onBackground = Color(0xFFE7EFF3),
-    surface = Color(0xFF10191D),
-    onSurface = Color(0xFFE7EFF3),
-    surfaceVariant = Color(0xFF243840),
-    onSurfaceVariant = Color(0xFFC1D4DE),
-    surfaceContainerHighest = Color(0xFF243840),
+    primary = Color(0xFF8BDBB2),
+    onPrimary = Color(0xFF113A2B),
+    secondary = Color(0xFFFFB097),
+    background = Color(0xFF151B19),
+    onBackground = Color(0xFFE7EFE9),
+    surface = Color(0xFF151B19),
+    onSurface = Color(0xFFE7EFE9),
+    surfaceVariant = Color(0xFF26382F),
+    onSurfaceVariant = Color(0xFFC4D5C9),
+    surfaceContainerHighest = Color(0xFF26382F),
 )
 
 @Composable

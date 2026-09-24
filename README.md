@@ -1,18 +1,17 @@
 # RateMock
 
-面向步态与 GPS 数据仿真的 Android 项目。当前版本为 **P0 工程骨架**：包含纯 Kotlin/JVM 运动学内核和 Compose 验证页；尚不是完整的跑步模拟器。
+面向步态与 GPS 数据仿真的 Android 项目。当前源码包含纯 Kotlin/JVM 仿真内核、前台 GPS/步数记录器，以及开发中的应用内模拟跑台。
 
-> **项目状态：云端构建与测试已通过；真机界面验收待执行。**
+> **项目状态：P1 内核与 S7 记录器已经通过 CI 和部分真机验收；P2 模拟跑台源码已实现，尚未通过 CI 编译和真机验证。**
 >
-> 已实测：Kotlin 编译、14/14 JUnit 测试（JDK 17 与 21）、Android lint、debug APK 生成与下载校验。
-> 未完成：手机安装与启动页界面确认。详见 [`docs/P0-IMPLEMENTATION.md`](docs/P0-IMPLEMENTATION.md)。
+> P2 的构建与设备实测完成前，不应把它视为已交付的 APK。详见 [`docs/DESIGN-p2-simulator.md`](docs/DESIGN-p2-simulator.md)。
 
 ## 当前功能
 
-- 纯 Kotlin/JVM 内核：按 `speedMps = cadenceSpm × stepLengthMeters / 60` 换算步频、单步长度和速度，并校验数值输入。
-- 14 个 JUnit 5 测试：覆盖换算、边界、非法输入、溢出和往返计算；已在云端 JDK 17 与 21 实际跑通（failures=0、errors=0）。
-- Compose 验证页：显示明确标为非实测的演示值。
-- GitHub Actions：JDK 17/21 内核测试 → Android lint → debug APK 与 SHA-256 产物，最近一次运行三个 job 全绿。
+- 纯 Kotlin/JVM 内核：可行域、运动计划、固定步长真值、GPS 观测、导出和校准；JDK 17/21 单测通过。新增的可暂停交互会话单测仍待 CI 运行。
+- Android 前台记录器：独立采集真实 GPS 与累计步数到应用私有 CSV，已在真机上验证连续采样。
+- P2 模拟跑台源码：选择目标速度与时长，自动使用独立的步行/跑步工程默认模型；实时显示距离、步数和步频，通过通知暂停、继续或停止；息屏/后台不主动暂停。**尚未编译或真机验收**。
+- GitHub Actions：JDK 17/21 内核测试 → Android lint → debug APK 与 SHA-256 产物；不会上传个人健康数据。
 - 离线工程检查脚本；本地构建入口默认阻止依赖下载。
 
 ## 构建和验证
@@ -25,11 +24,11 @@ python3 scripts/check_project.py
 
 没有明确下载许可和网络预算时，不要运行 `./gradlew`（包括 `--offline`）：Wrapper 可能先下载 Gradle 发行包。
 
-目标仓库为 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，CI 目标分支为 `master`。云端构建已成功（run [`35848681022`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/35848681022)）；可在该 run 的 Artifacts 中下载 `ratemock-debug-2` 获得 `app-debug.apk` 与 `SHA256SUMS`（保留 7 天）。构建步骤和安装说明见 [`docs/BUILD.md`](docs/BUILD.md)。
+目标仓库为 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，CI 目标分支为 `master`。最近一次已验证的 P1 构建是 run [`36038553080`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/36038553080)；它**不包含**本地未提交的 P2 改动。构建步骤和安装说明见 [`docs/BUILD.md`](docs/BUILD.md)。
 
 ## 模型边界
 
-`stepLength` 是每一步的前进距离，不等于完整左右脚循环的 `stride length`。GPS 速度不能单独、唯一确定步频。P1 独立内核已包含运动计划、步态仿真、GPS 观测与校准拟合；Apple Health 数据可在本机提取为步行和跑步两份探索性样本，并由内核按目标速度自动选择对应模型。个人拟合尚未通过充分实跑验证，也尚未接入当前 P0 应用界面。产品阶段和风险说明见 [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)。
+`stepLength` 是每一步的前进距离，不等于完整左右脚循环的 `stride length`。GPS 速度不能单独、唯一确定步频。P1 内核包含运动计划、步态仿真、GPS 观测与校准拟合；Apple Health 数据可在本机提取为步行和跑步两份探索性样本。个人拟合的解释力不足，**不进入公开 APK**；P2 首版只使用清楚标为未校准的工程默认档位。产品阶段和风险说明见 [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)。
 
 本项目不保证与任何第三方应用、校园跑平台或设备兼容，也不承诺绕过第三方服务的检测或规则。研究笔记不是已实现功能说明：[`docs/DESIGN-injection-fusion.md`](docs/DESIGN-injection-fusion.md)。
 
@@ -40,6 +39,7 @@ python3 scripts/check_project.py
 - [构建与验证](docs/BUILD.md)
 - [P0 实施记录](docs/P0-IMPLEMENTATION.md)
 - [P1 内核设计与校准说明](docs/DESIGN-p1-sim-core.md)
+- [P2 应用内模拟跑台](docs/DESIGN-p2-simulator.md)
 - [探索性定位注入研究笔记](docs/DESIGN-injection-fusion.md)
 
 ## 许可

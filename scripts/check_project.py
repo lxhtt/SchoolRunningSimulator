@@ -104,6 +104,7 @@ def main() -> None:
             "android.permission.ACTIVITY_RECOGNITION",
             "android.permission.FOREGROUND_SERVICE",
             "android.permission.FOREGROUND_SERVICE_LOCATION",
+            "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
             "android.permission.POST_NOTIFICATIONS",
         }.issubset(permissions),
         "S7 recorder permissions are incomplete",
@@ -112,6 +113,13 @@ def main() -> None:
     require(activity is not None, "Missing launcher activity")
     require(activity.attrib[ANDROID + "name"] == ".MainActivity", "Wrong launcher class")
     require(activity.attrib[ANDROID + "exported"] == "true", "Launcher must be exported")
+    services = {service.attrib[ANDROID + "name"]: service for service in manifest.findall("application/service")}
+    require(services[".recording.RecorderService"].attrib[ANDROID + "foregroundServiceType"] == "location", "Recorder type changed")
+    simulator = services[".simulation.SimulatorService"]
+    require(simulator.attrib[ANDROID + "exported"] == "false", "Simulator must not be exported")
+    require(simulator.attrib[ANDROID + "foregroundServiceType"] == "specialUse", "Simulator service type changed")
+    subtype = simulator.find("property")
+    require(subtype is not None and subtype.attrib.get(ANDROID + "name") == "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE", "Missing simulator subtype")
     for path in (ROOT / "app/src/main/res").rglob("*.xml"):
         ET.parse(path)
 
