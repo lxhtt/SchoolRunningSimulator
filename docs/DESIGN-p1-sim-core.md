@@ -39,7 +39,7 @@
 
 P1 较大，按可单独验收的切片推进，每片都可以单独跑 CI。
 
-> S1 已完成并通过 run `35958878288`；下一个实现切片是 S2：配置、运行计划和速度平滑。
+> S1、S2 已完成并通过 run `35960256603`；下一个实现切片是 S3：运行状态、步事件与真值层。
 
 | 切片 | 内容 | 验收 |
 |---|---|---|
@@ -61,7 +61,9 @@ S1 已落地并由 GitHub Actions run [`35958878288`](https://github.com/lxhtt/S
 - `FeasibilitySolver`：端点可行性判据、精确冲突报告、单速度的可行步频/步长区间；包含浮点边界回归保护。
 - `CadencePolicy`：`PowerLawCadence`、`LinearCadence`、`FixedCadence`。
 - `GaitResolver`：策略输出夹取到可行区间，保留原始模型值和 `clamped` 标记；恒等式仍成立。
-- 测试报告：`GaitLimitsTest` 4、`GaitKinematicsTest` 14、`FeasibilitySolverTest` 12、`CadencePolicyTest` 7、`GaitResolverTest` 13，共 **50/50 通过**；JDK 17 与 JDK 21 结果一致。
+- `RunPlan`：严格校验正速度段、按时间/距离的段限制，以及有序不重叠暂停窗口。
+- `SpeedPlanner`：固定步长下的因果速度规划，限制加速度和 jerk；到达静止边界时显式报告 `terminalReset`。
+- 测试报告：`GaitLimitsTest` 4、`GaitKinematicsTest` 14、`FeasibilitySolverTest` 12、`CadencePolicyTest` 7、`GaitResolverTest` 13、`RunPlanTest` 5、`SpeedPlannerTest` 7，共 **62/62 通过**；JDK 17 与 JDK 21 结果一致。
 - 同一 workflow 的 Android lint 与 debug APK job 也通过；S1 没有增加 Android 权限或改变 P0 APK 行为。
 
 ## 2. 数学基础（可行性判据）
