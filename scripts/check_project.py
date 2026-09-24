@@ -106,8 +106,9 @@ def main() -> None:
             "android.permission.FOREGROUND_SERVICE_LOCATION",
             "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
             "android.permission.POST_NOTIFICATIONS",
+            "android.permission.WAKE_LOCK",
         }.issubset(permissions),
-        "S7 recorder permissions are incomplete",
+        "S7/P2 foreground-service permissions are incomplete",
     )
     activity = manifest.find("application/activity")
     require(activity is not None, "Missing launcher activity")

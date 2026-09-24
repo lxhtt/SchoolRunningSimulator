@@ -104,32 +104,34 @@ fun SimulatorScreen(
         Text(stringResource(R.string.sim_title), modifier = Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineMedium)
         Text(stringResource(R.string.sim_model_note), color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium)
-        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
-            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(statusLabel), color = if (snapshot.status == SimulationStatus.RUNNING.name)
-                    MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.titleMedium)
-                Text(stringResource(modeLabel), style = MaterialTheme.typography.labelLarge)
-                if (active) {
-                    Text(stringResource(R.string.sim_speed_value, snapshot.targetSpeedMps),
-                        style = MaterialTheme.typography.bodyMedium)
+        if (snapshot.status != "IDLE") {
+            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(stringResource(statusLabel), color = if (snapshot.status == SimulationStatus.RUNNING.name)
+                        MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(modeLabel), style = MaterialTheme.typography.labelLarge)
+                    if (active) {
+                        Text(stringResource(R.string.sim_speed_value, snapshot.targetSpeedMps),
+                            style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Text(stringResource(R.string.sim_distance_value, snapshot.distanceMeters),
+                        style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Monospace))
+                    Text(stringResource(R.string.sim_distance), style = MaterialTheme.typography.labelMedium)
+                    LinearProgressIndicator(
+                        progress = { (snapshot.elapsedSeconds / snapshot.durationSeconds).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    val elapsed = snapshot.elapsedSeconds.toInt().coerceAtLeast(0)
+                    val total = snapshot.durationSeconds.toInt().coerceAtLeast(0)
+                    Text(stringResource(R.string.sim_time_value, elapsed / 60, elapsed % 60, total / 60, total % 60),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Metric(stringResource(R.string.sim_speed), stringResource(R.string.sim_current_speed_value, snapshot.speedMps), Modifier.weight(1f))
+                        Metric(stringResource(R.string.sim_cadence), stringResource(R.string.sim_cadence_value, snapshot.cadenceSpm), Modifier.weight(1f))
+                    }
+                    Text(stringResource(R.string.sim_steps_value, snapshot.steps), style = MaterialTheme.typography.titleMedium)
                 }
-                Text(stringResource(R.string.sim_distance_value, snapshot.distanceMeters),
-                    style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Monospace))
-                Text(stringResource(R.string.sim_distance), style = MaterialTheme.typography.labelMedium)
-                LinearProgressIndicator(
-                    progress = { (snapshot.elapsedSeconds / snapshot.durationSeconds).coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                val elapsed = snapshot.elapsedSeconds.toInt().coerceAtLeast(0)
-                val total = snapshot.durationSeconds.toInt().coerceAtLeast(0)
-                Text(stringResource(R.string.sim_time_value, elapsed / 60, elapsed % 60, total / 60, total % 60),
-                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Metric(stringResource(R.string.sim_speed), stringResource(R.string.sim_current_speed_value, snapshot.speedMps), Modifier.weight(1f))
-                    Metric(stringResource(R.string.sim_cadence), stringResource(R.string.sim_cadence_value, snapshot.cadenceSpm), Modifier.weight(1f))
-                }
-                Text(stringResource(R.string.sim_steps_value, snapshot.steps), style = MaterialTheme.typography.titleMedium)
             }
         }
         if (!active) {
@@ -137,13 +139,15 @@ fun SimulatorScreen(
                 Text(stringResource(R.string.sim_speed_target), style = MaterialTheme.typography.titleSmall)
                 Text(stringResource(R.string.sim_speed_value, targetSpeed),
                     style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace))
-                Slider(value = targetSpeed, onValueChange = { targetSpeed = it },
-                    valueRange = InteractiveSimulation.MIN_SPEED_MPS.toFloat()..InteractiveSimulation.MAX_SPEED_MPS.toFloat(),
-                    steps = 41)
+                Text(stringResource(if (targetSpeed < InteractiveSimulation.MODE_BOUNDARY_MPS) R.string.sim_mode_walking
+                    else R.string.sim_mode_running), color = MaterialTheme.colorScheme.tertiary,
+                    style = MaterialTheme.typography.labelLarge)
+                Slider(value = targetSpeed, onValueChange = { targetSpeed = (it * 10).roundToInt() / 10f },
+                    valueRange = InteractiveSimulation.MIN_SPEED_MPS.toFloat()..InteractiveSimulation.MAX_SPEED_MPS.toFloat())
                 Text(stringResource(R.string.sim_duration), style = MaterialTheme.typography.titleSmall)
                 Text(stringResource(R.string.sim_minutes_value, durationMinutes.roundToInt()), style = MaterialTheme.typography.titleLarge)
-                Slider(value = durationMinutes, onValueChange = { durationMinutes = it },
-                    valueRange = 1f..30f, steps = 28)
+                Slider(value = durationMinutes, onValueChange = { durationMinutes = it.roundToInt().toFloat() },
+                    valueRange = 1f..30f)
             }
         }
         if (!notificationAllowed) {
@@ -196,7 +200,7 @@ private fun readSnapshot(context: Context): SimulatorUiSnapshot {
     val preferences = context.getSharedPreferences(SimulatorService.PREFS, Context.MODE_PRIVATE)
     val rawStatus = preferences.getString(SimulatorService.KEY_STATUS, "IDLE") ?: "IDLE"
     val heartbeat = preferences.getLong(SimulatorService.KEY_HEARTBEAT_MS, 0L)
-    val status = if (rawStatus in setOf(SimulationStatus.RUNNING.name, SimulationStatus.PAUSED.name) &&
+    val status = if (rawStatus == SimulationStatus.RUNNING.name &&
         (heartbeat == 0L || System.currentTimeMillis() - heartbeat > 5_000L)) {
         SimulatorService.STATUS_INTERRUPTED
     } else rawStatus

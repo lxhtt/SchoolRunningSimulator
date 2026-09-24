@@ -64,8 +64,8 @@
     <string name="sim_current_speed_value">%1$.2f 米/秒</string>
     <string name="sim_cadence_value">%1$.0f 步/分</string>
     <string name="sim_steps_value">%1$d 步</string>
-    <string name="sim_notification_title">RateMock 模拟跑台</string>
-    <string name="sim_notification_progress">%1$s · %2$d:%3$02d / %4$d:%5$02d · %6$.0f 米</string>
+    <string name="sim_notification_title">RateMock</string>
+    <string name="sim_notification_progress">%1$s %2$d:%3$02d/%4$d:%5$02d · %6$.0f米</string>
     <string name="sim_notification_channel">模拟进度</string>
     <string name="sim_interrupted_note">前台服务已退出，本次进度无法继续；可以重新开始。</string>
     <string name="sim_error_note">请检查通知权限或重新打开应用后再试。</string>

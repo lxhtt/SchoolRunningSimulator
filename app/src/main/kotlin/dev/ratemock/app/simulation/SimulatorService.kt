@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import dev.ratemock.app.MainActivity
 import dev.ratemock.app.R
@@ -22,6 +23,7 @@ import dev.ratemock.core.truth.SimulationStatus
 class SimulatorService : Service() {
     private val worker = HandlerThread("RateMockSimulator")
     private lateinit var handler: Handler
+    private lateinit var wakeLock: PowerManager.WakeLock
     private var session: InteractiveSimulation? = null
     private var started = false
     private var lastTickMs = 0L
@@ -38,6 +40,9 @@ class SimulatorService : Service() {
         super.onCreate()
         worker.start()
         handler = Handler(worker.looper)
+        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dev.ratemock.app:simulation")
+        wakeLock.setReferenceCounted(false)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, getString(R.string.sim_notification_channel), NotificationManager.IMPORTANCE_LOW),
         )
@@ -46,6 +51,9 @@ class SimulatorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         if (action != ACTION_START && !started) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_STATUS, if (action == ACTION_STOP) SimulationStatus.STOPPED.name else STATUS_INTERRUPTED)
+                .apply()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -101,6 +109,12 @@ class SimulatorService : Service() {
 
     private fun publish(forceNotification: Boolean = false) {
         val snapshot = session?.snapshot() ?: return
+        if (snapshot.status == SimulationStatus.RUNNING && !wakeLock.isHeld) {
+            val remainingMs = ((snapshot.durationSeconds - snapshot.elapsedSeconds).coerceAtLeast(0.0) * 1_000).toLong()
+            wakeLock.acquire(remainingMs + WAKE_LOCK_MARGIN_MS)
+        } else if (snapshot.status != SimulationStatus.RUNNING) {
+            releaseWakeLock()
+        }
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putString(KEY_STATUS, snapshot.status.name)
             .putString(KEY_MODE, snapshot.mode.name)
@@ -168,6 +182,8 @@ class SimulatorService : Service() {
     )
 
     private fun failure(error: RuntimeException) {
+        releaseWakeLock()
+        session = null
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putString(KEY_STATUS, STATUS_ERROR)
             .putString(KEY_ERROR, error.javaClass.simpleName)
@@ -177,9 +193,14 @@ class SimulatorService : Service() {
         stopSelf()
     }
 
+    private fun releaseWakeLock() {
+        if (wakeLock.isHeld) wakeLock.release()
+    }
+
     override fun onDestroy() {
         handler.removeCallbacks(ticker)
         handler.post {
+            releaseWakeLock()
             if (session?.snapshot()?.status in ACTIVE) {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_STATUS, STATUS_INTERRUPTED).apply()
             }
@@ -214,7 +235,8 @@ class SimulatorService : Service() {
         private const val CHANNEL_ID = "ratemock-simulation"
         private const val NOTIFICATION_ID = 1002
         private const val TICK_MS = 1_000L
-        private const val NOTIFICATION_INTERVAL_MS = 2_000L
+        private const val NOTIFICATION_INTERVAL_MS = 1_000L
+        private const val WAKE_LOCK_MARGIN_MS = 60_000L
         private val ACTIVE = setOf(SimulationStatus.RUNNING, SimulationStatus.PAUSED)
     }
 }

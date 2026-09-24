@@ -59,32 +59,34 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             RateMockTheme {
-                var selectedTab by rememberSaveable { mutableIntStateOf(0) }
-                Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                    TabRow(selectedTabIndex = selectedTab) {
-                        Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(stringResource(R.string.sim_tab)) })
-                        Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(stringResource(R.string.record_tab)) })
-                    }
-                    Box(modifier = Modifier.weight(1f)) {
-                        if (selectedTab == 0) {
-                            SimulatorScreen(
-                                onStart = { speed, duration -> startSimulation(speed, duration) },
-                                onCommand = { action ->
-                                    runCatching { startService(Intent(this@MainActivity, SimulatorService::class.java).setAction(action)) }
-                                },
-                                onRequestNotification = { requestSimulationNotification() },
-                            )
-                        } else {
-                            RecorderScreen(
-                                onRequestPermissions = { requestRecordingPermissions() },
-                                onStartRecording = {
-                                    val intent = Intent(this@MainActivity, RecorderService::class.java).setAction(RecorderService.ACTION_START)
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-                                },
-                                onStopRecording = {
-                                    startService(Intent(this@MainActivity, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
-                                },
-                            )
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+                    Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+                        TabRow(selectedTabIndex = selectedTab) {
+                            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(stringResource(R.string.sim_tab)) })
+                            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(stringResource(R.string.record_tab)) })
+                        }
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (selectedTab == 0) {
+                                SimulatorScreen(
+                                    onStart = { speed, duration -> startSimulation(speed, duration) },
+                                    onCommand = { action ->
+                                        runCatching { startService(Intent(this@MainActivity, SimulatorService::class.java).setAction(action)) }
+                                    },
+                                    onRequestNotification = { requestSimulationNotification() },
+                                )
+                            } else {
+                                RecorderScreen(
+                                    onRequestPermissions = { requestRecordingPermissions() },
+                                    onStartRecording = {
+                                        val intent = Intent(this@MainActivity, RecorderService::class.java).setAction(RecorderService.ACTION_START)
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+                                    },
+                                    onStopRecording = {
+                                        startService(Intent(this@MainActivity, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
+                                    },
+                                )
+                            }
                         }
                     }
                 }
