@@ -348,13 +348,23 @@ speed_mps,cadence_spm,weight
 
 - 导出：iPhone 健康 App → 头像 → 导出所有健康数据，得到 `export.xml` 与每次训练的 `workout-routes/route_*.gpx`。
 - 可用字段：`HKQuantityTypeIdentifierStepCount`、`DistanceWalkingRunning`；Apple Watch 可能还提供 `RunningSpeed` 与 `RunningStrideLength`。
-- 推导方式：步频 = Δ步数 / Δ时间；速度 = Δ距离 / Δ时间（或由 GPX 计算）。因此**只有 iPhone 放兜里也能得到配对数据**。
-- 实现：一个本机 Python 脚本，用流式解析（`iterparse`）避免把几百 MB 的 XML 全部读进内存，输出 §11.1 的 CSV。脚本放在 `scripts/` 下，属于工具脚本，不进 `sim-core`。
+- 推导方式：步频 = 时间段内步数 / 持续时间；当前实现的速度来自同次运动的 GPX 点速度（仅采用时间连续且水平精度合格的点）。没有匹配路线的 iPhone/Watch 历史记录暂不参与此脚本，`DistanceWalkingRunning` 的无路线回退尚未实现。
+- 实现：`scripts/apple_health_calibration.py` 两次流式扫描大 XML，按步行/跑步 Workout 分类，同一来源的短步数记录按窗口聚合，与对应 GPX 中有时间戳且水平精度合格的速度配对；速度不稳定、轨迹缺口、暂停/起止边缘均剔除。输出 `walking-calibration.csv`、`running-calibration.csv` 和无坐标的质量报告。缺少匹配 GPX 的运动不会参与这一版提取。
+- 使用（全部在本机运行，不调用 Gradle、不上传数据）：
+
+  ```bash
+  umask 077
+  python3 scripts/apple_health_calibration.py --input '/path/to/apple_health_export/导出.xml' --routes '/path/to/apple_health_export/workout-routes' --out-dir '/path/to/private-output'
+  ```
+
+- 只有样本数与速度跨度满足 S6 的最低输入条件，**不代表个人模型已验收**；质量报告标记为探索性。不同运动次数、残差和适用范围还须人工检查，不能将这种拟合直接当作默认生理参数。
+- 步行和跑步分别用 S6 `calibrate` 拟合。`AutoGaitSelector` 在目标速度超过两档拟合范围中点时选跑步模型；有上一档状态时使用 0.1 m/s 滞回，并显式返回是否超出所选档的实测速度范围。P2 模拟器界面接入尚未完成。
 - 已知局限：
   - 窗口平均粒度粗（步数记录是分批上报的），不如 S7 的逐秒采样干净。
-  - 无 Watch 时可能没有 `RunningSpeed`/`RunningStrideLength`，只能靠距离与步数差分。
+  - 没有匹配 GPX 时当前脚本不会拟合该运动；设备上报的步数批次可能跨越暂停，稳态筛选只是启发式，不是生理真实性证明。
   - 步数会包含热身、走路、休息段，必须按窗口筛稳定段（与 §11.1 的采样协议一致）。
-  - 导出文件很大，但全程在手机与电脑之间本地传输，不消耗额外流量。
+  - 无可用 GPX、不同来源的步数重复记录、定位精度差或长时间轨迹缺口都会减少可用样本；**不能**为凑满拟合最低行数而填补或合并这些记录。
+  - 原始导出包含其他敏感健康信息，不放进项目目录、CI、Git 或任何公共产物。提取 CSV、质量报告及个人拟合 JSON 仅保存在本机私有目录。
 
 #### 路径二：App 内前台服务记录器（S7）
 

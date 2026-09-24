@@ -42,13 +42,26 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
       - name: Check project without dependencies
-        run: python3 scripts/check_project.py
+        run: |
+          python3 scripts/check_project.py
+          python3 -m unittest discover -s tests
       - name: Set up Gradle cache and validate wrapper
         uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
       - name: Run core tests without Android environment
         run: bash scripts/test-core.sh
+      - name: Build portable core CLI on JDK 17
+        if: ${{ matrix.java == '17' }}
+        run: env -u ANDROID_HOME -u ANDROID_SDK_ROOT ./gradlew --no-daemon --console=plain -p sim-core installDist
+      - name: Upload portable core CLI
+        if: ${{ matrix.java == '17' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sim-core-cli
+          path: sim-core/build/install/sim-core/
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload core test reports
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
