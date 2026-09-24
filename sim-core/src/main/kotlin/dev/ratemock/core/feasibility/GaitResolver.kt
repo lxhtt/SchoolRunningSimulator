@@ -45,7 +45,7 @@ class GaitResolver(
     fun resolveTransient(speedMps: Double): GaitSample {
         FeasibilitySolver.requireNonNegativeSpeed(speedMps)
         if (speedMps == 0.0) return resolve(0.0)
-        val reachableSpeed = speedMps.coerceIn(reachable.start, reachable.endInclusive)
+        val reachableSpeed = speedMps.coerceIn(reachable.minMps, reachable.maxMps)
         val boundary = resolve(reachableSpeed)
         val stepLengthMeters = GaitKinematics.stepLengthMeters(speedMps, boundary.cadenceSpm)
         return GaitSample(
