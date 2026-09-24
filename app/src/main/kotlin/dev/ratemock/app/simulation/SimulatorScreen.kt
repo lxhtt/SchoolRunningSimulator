@@ -237,6 +237,9 @@ fun SimulatorScreen(
                 Text(stringResource(if (startingAt != 0L) R.string.sim_starting else R.string.sim_start))
             }
         }
+        if (launchFailed || snapshot.status == SimulatorService.STATUS_ERROR) {
+            Text(stringResource(R.string.sim_error_note), color = MaterialTheme.colorScheme.error)
+        }
         if (snapshot.error == SimulatorService.ERROR_INFEASIBLE) {
             Text(stringResource(R.string.sim_infeasible_note), color = MaterialTheme.colorScheme.error)
         }
