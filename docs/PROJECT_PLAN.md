@@ -1,7 +1,7 @@
 # 校园跑步频模拟器 — 项目计划
 
-> 状态：P0 源码与云构建配置已落盘；首次云端编译、测试及真机验收未执行。
-> 本文区分当前交付与未来计划；P0 实际状态见 [`P0-IMPLEMENTATION.md`](P0-IMPLEMENTATION.md) 和 [`BUILD.md`](BUILD.md)。
+> 状态：P0–P1 源码、云端构建和 JVM 验证已完成；P0/S7 真机验收以及 P2+ 产品阶段仍未完成。
+> 当前实现状态以 `docs/DESIGN-p1-sim-core.md` 和最近 GitHub Actions run 为准。
 
 ## 0. 一句话定义
 
@@ -154,7 +154,8 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 
 ## 7. 下一步
 
-1. P0 已完成云端验收：run [`35848681022`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/35848681022) 三个 job 全绿，14/14 单测通过，lint 通过，APK 已生成并校验；细节见 [`P0-IMPLEMENTATION.md`](P0-IMPLEMENTATION.md)。
-2. 剩余唯一验收项：真机安装 APK，确认启动页显示“2.70 米/秒”，并检查小屏/横屏/大字体/深浅色。
-3. 真机确认后进入 P1：细化可行域求解、状态机与可校准步态模型，不把未验证的生理系数写死。
-4. 可选清理项（不阻塞 P1）：升级 `upload-artifact` 到不含 Node.js 20 弃用的版本；评估 AGP/compileSdk/依赖版本升级；确认 API 37 平台可用性。
+1. **完成 P0 真机验收**：安装最新 debug APK，确认启动页显示“2.70 米/秒”，并检查小屏/横屏/大字体/深浅色。
+2. **完成 S7 真机验收**：授予定位、活动识别和通知权限，息屏记录 GPS 与 `TYPE_STEP_COUNTER`，停止后取出 CSV 并检查数据完整性。
+3. **补齐 S7→S6 校准桥接**：当前 S7 CSV 是原始 GPS/累计步数记录，不是 S6 直接要求的稳定 `speed_mps,cadence_spm` 样本；需要增加稳定段聚合、GPS 距离/速度计算和步数差分转换。
+4. **进入 P2**：实现真正的 App 内仿真跑台（配置表单、实时仪表盘、曲线/轨迹、暂停/停止/导出），而不是只保留当前验证页。
+5. 后续再评估 P3 真跑助手、P4 Mock Location、P5 LSPosed、P6 硬化和 P7 软件融合；这些都未实现，也不承诺兼容特定第三方 App。
