@@ -2,7 +2,7 @@
 
 面向步态与 GPS 数据仿真的 Android 项目。当前源码包含纯 Kotlin/JVM 仿真内核、前台 GPS/步数记录器，以及开发中的应用内模拟跑台。
 
-> **项目状态：P1 内核与 S7 记录器已经通过 CI 和部分真机验收；P2 首版通过首轮 CI（run `36044615123`），息屏通知和界面修复仍待复测。**
+> **项目状态：P1 S1–S7 与 S7→S6 桥接已实现并纳入 CI；S7 连续写入已在真机验证。当前设备原始记录经保守桥接后为 insufficient，未生成个人默认模型。**
 >
 > CI 构建成功不等于真机后台行为已验收。P2 的实现边界与设备验收步骤见 [`docs/DESIGN-p2-simulator.md`](docs/DESIGN-p2-simulator.md)。
 
@@ -10,8 +10,9 @@
 
 - 纯 Kotlin/JVM 内核：可行域、运动计划、固定步长真值、GPS 观测、导出和校准；新增可暂停交互会话已在首轮 P2 CI 的 JDK 17/21 测试中通过。
 - Android 前台记录器：独立采集真实 GPS 与累计步数到应用私有 CSV，已在真机上验证连续采样。
-- P2 模拟跑台：选择目标速度与时长，自动使用独立的步行/跑步工程默认模型；实时显示距离、步数和步频，通过通知暂停、继续或停止；息屏/后台不主动暂停。首轮 APK 在真机上发现通知息屏更新和深色主题问题，修复版仍待 CI 与设备复测。
-- GitHub Actions：JDK 17/21 内核测试 → Android lint → debug APK 与 SHA-256 产物；不会上传个人健康数据。
+- S7→S6 离线桥接：`scripts/recording_to_calibration.py` 将 Android 原始 CSV 按稳定窗口转换为 S6 输入，并生成质量报告；个人原始数据与派生文件不进仓库。
+- P2 模拟跑台：选择目标速度与时长，自动使用独立的步行/跑步工程默认模型；实时显示距离、步数和步频，通过通知暂停、继续或停止；息屏/后台不主动暂停。当前 APK 已通过 CI 和真机界面复测。
+- GitHub Actions：JDK 17/21 内核测试（含交互会话与 S7 桥接 Python 测试）→ Android lint → debug APK 与 SHA-256 产物；不会上传个人健康数据。
 - 离线工程检查脚本；本地构建入口默认阻止依赖下载。
 
 ## 构建和验证
@@ -24,7 +25,7 @@ python3 scripts/check_project.py
 
 没有明确下载许可和网络预算时，不要运行 `./gradlew`（包括 `--offline`）：Wrapper 可能先下载 Gradle 发行包。
 
-目标仓库为 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，CI 目标分支为 `master`。P2 首轮构建 run [`36044615123`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/36044615123) 已通过 JDK 17/21 测试、Android lint 和 APK 构建；本地后续修复不包含在该产物中。构建步骤和安装说明见 [`docs/BUILD.md`](docs/BUILD.md)。
+目标仓库为 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，CI 目标分支为 `master`。最近一次包含 P2/P1 桥接的成功构建为 run [`36052244751`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/36052244751)；构建步骤和安装说明见 [`docs/BUILD.md`](docs/BUILD.md)。
 
 ## 模型边界
 

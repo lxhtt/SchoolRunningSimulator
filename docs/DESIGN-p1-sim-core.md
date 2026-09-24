@@ -1,7 +1,7 @@
 # P1 设计：`sim-core` 仿真内核
 
-> 状态：S1–S6 已实现并通过云端测试；S7 记录器已在真机验证持续写入，完整室外息屏验收仍需更多数据。Apple Health 本机提取器与内核自动选档已实现，个人样本目前仅供探索性拟合。
-> 本文持续作为 P1 的设计基线；已实现代码以 `sim-core/src/main/kotlin/dev/ratemock/core/feasibility/` 为准。
+> 状态：S1–S7 与 S7→S6 离线桥接已实现；S1–S6 及桥接 Python 测试已纳入 CI。S7 已在真机验证连续写入，完整室外息屏验收受设备 ROM 省电策略影响，结果与限制见 §12。
+> 本文持续作为 P1 的设计基线；已实现代码以 `sim-core/src/main/kotlin/dev/ratemock/core/` 为准。
 > 前置：P0 已通过云端实测（run `35848681022`：JDK 17/21 单测 14/14、lint、debug APK）。S1 验证 run：[`35958878288`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/35958878288)。
 
 ## 1. 范围
@@ -39,7 +39,7 @@
 
 P1 较大，按可单独验收的切片推进，每片都可以单独跑 CI。
 
-> S1–S7 代码已完成并通过 run `35999139396` 的编译/lint/APK 验证；S7 的定位、步数权限和息屏行为仍需真机验收。
+> S1–S7 及 S7→S6 桥接代码已完成；核心测试、桥接测试和 Android lint/APK 构建由 CI 验证。S7 真机连续记录已验证；息屏通知/服务存活受 M2007J1SC 的 MIUI 电源管理影响，不能据此宣称所有设备均可持续刷新。
 
 | 切片 | 内容 | 验收 |
 |---|---|---|
@@ -49,7 +49,7 @@ P1 较大，按可单独验收的切片推进，每片都可以单独跑 CI。
 | **S4** | `Route` + `RouteProjector` + `GpsStream` + `GaussMarkov` | 噪声统计与投影测试 |
 | **S5** | `export/*` + `cli/Main` | 导出回读与端到端冒烟 |
 | **S6** | `calibration/*`：CSV 导入 + 拟合 + 报告 + CLI 子命令 | 合成数据可还原参数；样本不足被拒绝 |
-| **S7** | Android 记录器：前台服务（type=location）+ `TYPE_STEP_COUNTER` → CSV | 真机跑一次，导出的 CSV 能被 S6 直接导入并拟合 |
+| **S7** | Android 记录器：前台服务（type=location）+ `TYPE_STEP_COUNTER` → 原始 CSV；`scripts/recording_to_calibration.py` 以稳定窗口转换为 S6 可导入 CSV | 真机原始记录已验证；桥接输出对当前个人文件因 GPS/速度范围不足保持 `insufficient`，不会伪造可用拟合 |
 
 S1–S6 是纯 JVM 单测；S5、S6 才用到 CLI；S7 是 Android 工作，需要真机验证。
 
@@ -71,7 +71,8 @@ S1 已落地并由 GitHub Actions run [`35958878288`](https://github.com/lxhtt/S
 - `ExportWriter` 与最小 CLI：可将一次确定性示例仿真写入完整输出目录；CLI 入口为 `dev.ratemock.core.cli.MainKt`。
 - `CalibrationCsvParser`、`CalibrationFitter`：校验至少 8 条、速度跨度和正权重，支持幂律/线性加权最小二乘、R²、残差和拟合速度范围。
 - `CalibrationJson` 与 CLI `calibrate` 子命令：输出参数来源范围和 `uncalibrated=false` 标记，超出拟合范围可由调用方显式警告。
-- S7 `RecorderService`：Android 前台 `location` 服务，同时记录 GPS 和 `TYPE_STEP_COUNTER`，CSV 写入 app 私有 `recordings/` 目录；界面提供权限申请、开始/停止控制。实现已通过云端 Android lint/debug APK 构建，尚未完成真机测试。
+- S7 `RecorderService`：Android 前台 `location` 服务，同时记录 GPS 和 `TYPE_STEP_COUNTER`，CSV 写入 app 私有 `recordings/` 目录；界面提供权限申请、开始/停止控制。已验证连续写入 185 个样本；设备息屏时 MIUI 可冻结唤醒锁和回调，应用保留原始数据并诚实报告限制。
+- S7→S6 桥接：`scripts/recording_to_calibration.py` 读取 S7 原始 CSV，按 15 秒稳定窗口计算 GPS 速度/累计步数差分步频，过滤缺口、精度、速度/步频边界和不稳定段，输出 `speed_mps,cadence_spm,weight` 与质量报告。当前个人真机文件得到 `insufficient`，不会静默放宽筛选。
 - 测试报告：`GaitLimitsTest` 4、`GaitKinematicsTest` 14、`FeasibilitySolverTest` 12、`CadencePolicyTest` 7、`GaitResolverTest` 13、`RunPlanTest` 5、`SpeedPlannerTest` 7、`TruthTypesTest` 1、`GaitEngineTest` 7、`RouteTest` 4、`GaussMarkovNoiseTest` 5、`ExportersTest` 4、`CalibrationTest` 7，共 **90/90 通过**；JDK 17 与 JDK 21 结果一致。
 - 同一 workflow 的 Android lint 与 debug APK job 也通过；S1 没有增加 Android 权限或改变 P0 APK 行为。
 
@@ -358,7 +359,7 @@ speed_mps,cadence_spm,weight
   ```
 
 - 只有样本数与速度跨度满足 S6 的最低输入条件，**不代表个人模型已验收**；质量报告标记为探索性。不同运动次数、残差和适用范围还须人工检查，不能将这种拟合直接当作默认生理参数。
-- 步行和跑步分别用 S6 `calibrate` 拟合。`AutoGaitSelector` 在目标速度超过两档拟合范围中点时选跑步模型；有上一档状态时使用 0.1 m/s 滞回，并显式返回是否超出所选档的实测速度范围。P2 模拟器界面接入尚未完成。
+- 步行和跑步分别用 S6 `calibrate` 拟合。`AutoGaitSelector` 在目标速度超过两档拟合范围中点时选跑步模型；有上一档状态时使用 0.1 m/s 滞回，并显式返回是否超出所选档的实测速度范围。
 - 已知局限：
   - 窗口平均粒度粗（步数记录是分批上报的），不如 S7 的逐秒采样干净。
   - 没有匹配 GPX 时当前脚本不会拟合该运动；设备上报的步数批次可能跨越暂停，稳态筛选只是启发式，不是生理真实性证明。
@@ -366,7 +367,21 @@ speed_mps,cadence_spm,weight
   - 无可用 GPX、不同来源的步数重复记录、定位精度差或长时间轨迹缺口都会减少可用样本；**不能**为凑满拟合最低行数而填补或合并这些记录。
   - 原始导出包含其他敏感健康信息，不放进项目目录、CI、Git 或任何公共产物。提取 CSV、质量报告及个人拟合 JSON 仅保存在本机私有目录。
 
-#### 路径二：App 内前台服务记录器（S7）
+#### S7→S6 桥接
+
+`scripts/recording_to_calibration.py` 将 S7 原始 CSV 转成 S6 所需的聚合输入：默认 15 秒窗口，使用 GPS 速度（或坐标差分）与累计步数差分，剔除缺口、低精度、速度/步频越界和不稳定窗口，输出 `speed_mps,cadence_spm,weight` 及 JSON 质量报告。脚本不输出位置和时间戳到校准 CSV；原始文件和派生文件都必须放在仓库外的私有目录。
+
+```bash
+umask 077
+python3 scripts/recording_to_calibration.py \
+  --input '/private/recording.csv' \
+  --out '/private/calibration.csv' \
+  --report '/private/calibration-quality.json'
+./gradlew -p sim-core run --args='calibrate --input /private/calibration.csv --out /private/fitted.json --model power'
+```
+
+当前设备记录（185 样本）经桥接后为 `insufficient`：GPS 精度和速度稳定性不足以形成 8 个有效窗口。这是保守的质量结论，不能通过放宽过滤器伪造个人模型。
+
 
 单次、但采样干净：GPS 与步数传感器同步逐秒记录，正是校准需要的稳态关系数据。
 

@@ -39,6 +39,7 @@ def main() -> None:
         "LICENSE", "README.md", "CREDITS.md", "THIRD_PARTY_NOTICES.md",
         "docs/PROJECT_PLAN.md", "docs/BUILD.md", "docs/README.md",
         "docs/P0-IMPLEMENTATION.md", "docs/DESIGN-injection-fusion.md",
+        "scripts/recording_to_calibration.py", "tests/test_recording_to_calibration.py",
     ]
     for path in required:
         require((ROOT / path).is_file(), f"Missing file: {path}")
@@ -67,6 +68,7 @@ def main() -> None:
         "Wrong Gradle distribution checksum",
     )
     require(os.access(ROOT / "gradlew", os.X_OK), "gradlew must be executable")
+    require(os.access(ROOT / "scripts/recording_to_calibration.py", os.X_OK), "Bridge script must be executable")
 
     catalog = tomllib.loads(text("gradle/libs.versions.toml"))
     for section in ("libraries", "plugins"):
@@ -163,6 +165,10 @@ def main() -> None:
     for path in ("scripts/test-core.sh", "scripts/build-android.sh"):
         result = subprocess.run(["bash", str(ROOT / path)], cwd=ROOT, env=env, capture_output=True, text=True, timeout=5)
         require(result.returncode == 2 and "disabled" in result.stderr, f"Local download guard failed: {path}")
+
+    for script in ("scripts/apple_health_calibration.py", "scripts/recording_to_calibration.py"):
+        result = subprocess.run([sys.executable, "-m", "py_compile", str(ROOT / script)], cwd=ROOT, capture_output=True, text=True)
+        require(result.returncode == 0, f"Python syntax check failed: {script}")
 
     p0_tests = text("sim-core/src/test/kotlin/dev/ratemock/core/GaitKinematicsTest.kt")
     p0_test_count = len(re.findall(r"^\s*@Test\s*$", p0_tests, re.M))
