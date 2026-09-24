@@ -1,9 +1,6 @@
 package dev.ratemock.core.truth
 
 import dev.ratemock.core.calibration.GaitMode
-import dev.ratemock.core.feasibility.FixedCadence
-import dev.ratemock.core.feasibility.GaitLimits
-import dev.ratemock.core.feasibility.GaitResolver
 import dev.ratemock.core.plan.DynamicsLimits
 import dev.ratemock.core.plan.RunPlan
 import dev.ratemock.core.plan.Segment
@@ -12,11 +9,17 @@ import dev.ratemock.core.plan.SpeedPlanner
 
 /** User-controlled, fixed-step simulation. All gait parameters here are uncalibrated defaults. */
 class InteractiveSimulation(
-    val targetSpeedMps: Double,
+    initialTargetSpeedMps: Double,
     val durationSeconds: Double,
+    val manualCadenceSpm: Double? = null,
+    val fatigueReduction: Double = 0.0,
 ) {
-    val mode: GaitMode = if (targetSpeedMps < MODE_BOUNDARY_MPS) GaitMode.WALKING else GaitMode.RUNNING
+    var targetSpeedMps: Double = initialTargetSpeedMps
+        private set
+    var mode: GaitMode = SimulatorGait.modeFor(targetSpeedMps)
+        private set
     private val engine: GaitEngine
+    private var effectiveTargetSpeedMps = initialTargetSpeedMps
     private var pendingSeconds = 0.0
     private var elapsedSeconds = 0.0
     private var distanceMeters = 0.0
@@ -26,21 +29,16 @@ class InteractiveSimulation(
     private var status = SimulationStatus.RUNNING
 
     init {
-        require(targetSpeedMps.isFinite() && targetSpeedMps in MIN_SPEED_MPS..MAX_SPEED_MPS) {
+        require(initialTargetSpeedMps.isFinite() && initialTargetSpeedMps in MIN_SPEED_MPS..MAX_SPEED_MPS) {
             "Target speed must be within $MIN_SPEED_MPS..$MAX_SPEED_MPS m/s"
         }
         require(durationSeconds.isFinite() && durationSeconds in MIN_DURATION_SECONDS..MAX_DURATION_SECONDS) {
             "Duration must be within $MIN_DURATION_SECONDS..$MAX_DURATION_SECONDS seconds"
         }
-        val limits = if (mode == GaitMode.WALKING) {
-            GaitLimits(90.0..170.0, 0.30..1.20)
-        } else {
-            GaitLimits(130.0..210.0, 0.55..1.60)
-        }
-        val policy = FixedCadence(if (mode == GaitMode.WALKING) 120.0 else 170.0)
+        SimulatorGait.validateProfile(initialTargetSpeedMps, manualCadenceSpm, fatigueReduction)
         engine = GaitEngine(
-            RunPlan(listOf(Segment(targetSpeedMps, SegmentLimit.Duration(durationSeconds)))),
-            GaitResolver(limits, policy),
+            RunPlan(listOf(Segment(initialTargetSpeedMps, SegmentLimit.Duration(durationSeconds)))),
+            SimulatorGait.resolver(mode, manualCadenceSpm),
             SpeedPlanner(DynamicsLimits(2.0, 8.0)),
             STEP_SECONDS,
         )
@@ -48,7 +46,8 @@ class InteractiveSimulation(
 
     fun snapshot(): SimulationSnapshot = SimulationSnapshot(
         status, mode, targetSpeedMps, durationSeconds, elapsedSeconds,
-        distanceMeters, speedMps, cadenceSpm, steps,
+        distanceMeters, speedMps, cadenceSpm, steps, effectiveTargetSpeedMps,
+        manualCadenceSpm, fatigueReduction,
     )
 
     fun advanceBy(seconds: Double): SimulationSnapshot {
@@ -56,6 +55,11 @@ class InteractiveSimulation(
         if (status != SimulationStatus.RUNNING) return snapshot()
         pendingSeconds += seconds
         while (pendingSeconds + 1e-9 >= STEP_SECONDS && !engine.isFinished()) {
+            val progress = (elapsedSeconds / durationSeconds - 0.7).coerceIn(0.0, 0.3) / 0.3
+            effectiveTargetSpeedMps = (targetSpeedMps * (1.0 - fatigueReduction * progress))
+                .coerceAtLeast(MIN_SPEED_MPS)
+            mode = SimulatorGait.modeFor(effectiveTargetSpeedMps, mode)
+            engine.setTargetSpeed(effectiveTargetSpeedMps, SimulatorGait.resolver(mode, manualCadenceSpm))
             val frame = engine.advance()
             pendingSeconds -= STEP_SECONDS
             elapsedSeconds = frame.truth.timeSeconds
@@ -68,6 +72,14 @@ class InteractiveSimulation(
             status = SimulationStatus.COMPLETED
             pendingSeconds = 0.0
         }
+        return snapshot()
+    }
+
+    /** Rejects infeasible speed changes without altering an active session. */
+    fun setTargetSpeed(speedMps: Double): SimulationSnapshot {
+        check(status == SimulationStatus.RUNNING || status == SimulationStatus.PAUSED)
+        SimulatorGait.validateProfile(speedMps, manualCadenceSpm, fatigueReduction)
+        targetSpeedMps = speedMps
         return snapshot()
     }
 
@@ -89,9 +101,9 @@ class InteractiveSimulation(
     }
 
     companion object {
-        const val MIN_SPEED_MPS = 0.8
-        const val MAX_SPEED_MPS = 5.0
-        const val MODE_BOUNDARY_MPS = 2.2
+        const val MIN_SPEED_MPS = SimulatorGait.MIN_SPEED_MPS
+        const val MAX_SPEED_MPS = SimulatorGait.MAX_SPEED_MPS
+        const val MODE_BOUNDARY_MPS = SimulatorGait.MODE_BOUNDARY_MPS
         const val MIN_DURATION_SECONDS = 10.0
         const val MAX_DURATION_SECONDS = 3_600.0
         private const val STEP_SECONDS = 0.1
@@ -110,4 +122,7 @@ data class SimulationSnapshot(
     val speedMps: Double,
     val cadenceSpm: Double,
     val steps: Long,
+    val effectiveTargetSpeedMps: Double,
+    val manualCadenceSpm: Double?,
+    val fatigueReduction: Double,
 )

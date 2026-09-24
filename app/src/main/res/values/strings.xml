@@ -40,6 +40,14 @@
     <string name="sim_minutes_value">%1$d 分钟</string>
     <string name="sim_mode_walking">步行 · 自动</string>
     <string name="sim_mode_running">跑步 · 自动</string>
+    <string name="sim_mode_auto">自动步频</string>
+    <string name="sim_mode_manual">手动步频</string>
+    <string name="sim_manual_cadence">目标步频</string>
+    <string name="sim_live_speed">运行中调速</string>
+    <string name="sim_apply_speed">应用新速度</string>
+    <string name="sim_step_length_value">对应单步长度：%1$.2f 米（工程范围校验）</string>
+    <string name="sim_fatigue_reduction">后段减速（规则模拟，可关闭）</string>
+    <string name="sim_percent_value">%1$d%%</string>
     <string name="sim_status_idle">准备就绪</string>
     <string name="sim_status_running">正在模拟</string>
     <string name="sim_status_paused">已暂停</string>
@@ -69,4 +77,5 @@
     <string name="sim_notification_channel">模拟进度</string>
     <string name="sim_interrupted_note">前台服务已退出，本次进度无法继续；可以重新开始。</string>
     <string name="sim_error_note">请检查通知权限或重新打开应用后再试。</string>
+    <string name="sim_infeasible_note">这个速度与当前步频对应的单步长度超出工程范围，未应用调速。</string>
 </resources>

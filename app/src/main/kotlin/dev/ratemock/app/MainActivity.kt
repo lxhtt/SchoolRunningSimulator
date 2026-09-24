@@ -69,9 +69,16 @@ class MainActivity : ComponentActivity() {
                         Box(modifier = Modifier.weight(1f)) {
                             if (selectedTab == 0) {
                                 SimulatorScreen(
-                                    onStart = { speed, duration -> startSimulation(speed, duration) },
+                                    onStart = { speed, duration, cadence, fatigue -> startSimulation(speed, duration, cadence, fatigue) },
                                     onCommand = { action ->
                                         runCatching { startService(Intent(this@MainActivity, SimulatorService::class.java).setAction(action)) }
+                                    },
+                                    onSetSpeed = { speed ->
+                                        runCatching {
+                                            startService(Intent(this@MainActivity, SimulatorService::class.java)
+                                                .setAction(SimulatorService.ACTION_SET_SPEED)
+                                                .putExtra(SimulatorService.EXTRA_SPEED_MPS, speed))
+                                        }
                                     },
                                     onRequestNotification = { requestSimulationNotification() },
                                 )
@@ -94,11 +101,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startSimulation(speed: Double, duration: Double): Boolean = runCatching {
+    private fun startSimulation(speed: Double, duration: Double, cadence: Double?, fatigue: Double): Boolean = runCatching {
         val intent = Intent(this, SimulatorService::class.java)
             .setAction(SimulatorService.ACTION_START)
             .putExtra(SimulatorService.EXTRA_SPEED_MPS, speed)
             .putExtra(SimulatorService.EXTRA_DURATION_SECONDS, duration)
+            .apply { cadence?.let { putExtra(SimulatorService.EXTRA_MANUAL_CADENCE_SPM, it) } }
+            .putExtra(SimulatorService.EXTRA_FATIGUE_REDUCTION, fatigue)
         startForegroundService(intent)
     }.isSuccess
 

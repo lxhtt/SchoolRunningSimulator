@@ -74,9 +74,12 @@ class SimulatorService : Service() {
                 }
                 val speed = intent?.getDoubleExtra(EXTRA_SPEED_MPS, Double.NaN) ?: Double.NaN
                 val duration = intent?.getDoubleExtra(EXTRA_DURATION_SECONDS, Double.NaN) ?: Double.NaN
+                val cadence = intent?.getDoubleExtra(EXTRA_MANUAL_CADENCE_SPM, Double.NaN)
+                    ?.takeIf { it.isFinite() }
+                val slowdown = intent?.getDoubleExtra(EXTRA_FATIGUE_REDUCTION, 0.0) ?: 0.0
                 handler.post {
                     try {
-                        session = InteractiveSimulation(speed, duration)
+                        session = InteractiveSimulation(speed, duration, cadence, slowdown)
                         lastTickMs = SystemClock.elapsedRealtime()
                         publish(forceNotification = true)
                         handler.postDelayed(ticker, TICK_MS)
@@ -84,6 +87,17 @@ class SimulatorService : Service() {
                         failure(error)
                     }
                 }
+            }
+            ACTION_SET_SPEED -> handler.post {
+                val current = session ?: return@post
+                advanceToNow()
+                try {
+                    current.setTargetSpeed(intent?.getDoubleExtra(EXTRA_SPEED_MPS, Double.NaN) ?: Double.NaN)
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(KEY_ERROR).apply()
+                } catch (error: IllegalArgumentException) {
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_ERROR, ERROR_INFEASIBLE).apply()
+                }
+                publish(forceNotification = true)
             }
             ACTION_PAUSE, ACTION_RESUME, ACTION_STOP -> handler.post {
                 val current = session ?: return@post
@@ -120,6 +134,9 @@ class SimulatorService : Service() {
             .putString(KEY_MODE, snapshot.mode.name)
             .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
             .putFloat(KEY_TARGET_MPS, snapshot.targetSpeedMps.toFloat())
+            .putFloat(KEY_EFFECTIVE_TARGET_MPS, snapshot.effectiveTargetSpeedMps.toFloat())
+            .putFloat(KEY_MANUAL_CADENCE_SPM, snapshot.manualCadenceSpm?.toFloat() ?: 0f)
+            .putFloat(KEY_FATIGUE_REDUCTION, snapshot.fatigueReduction.toFloat())
             .putFloat(KEY_DURATION_SECONDS, snapshot.durationSeconds.toFloat())
             .putFloat(KEY_ELAPSED_SECONDS, snapshot.elapsedSeconds.toFloat())
             .putFloat(KEY_DISTANCE_METERS, snapshot.distanceMeters.toFloat())
@@ -216,13 +233,19 @@ class SimulatorService : Service() {
         const val ACTION_PAUSE = "dev.ratemock.app.simulation.PAUSE"
         const val ACTION_RESUME = "dev.ratemock.app.simulation.RESUME"
         const val ACTION_STOP = "dev.ratemock.app.simulation.STOP"
+        const val ACTION_SET_SPEED = "dev.ratemock.app.simulation.SET_SPEED"
         const val EXTRA_SPEED_MPS = "speed_mps"
+        const val EXTRA_MANUAL_CADENCE_SPM = "manual_cadence_spm"
+        const val EXTRA_FATIGUE_REDUCTION = "fatigue_reduction"
         const val EXTRA_DURATION_SECONDS = "duration_seconds"
         const val PREFS = "simulator_status"
         const val KEY_STATUS = "status"
         const val KEY_MODE = "mode"
         const val KEY_HEARTBEAT_MS = "heartbeat_ms"
         const val KEY_TARGET_MPS = "target_mps"
+        const val KEY_EFFECTIVE_TARGET_MPS = "effective_target_mps"
+        const val KEY_MANUAL_CADENCE_SPM = "manual_cadence_spm"
+        const val KEY_FATIGUE_REDUCTION = "fatigue_reduction"
         const val KEY_DURATION_SECONDS = "duration_seconds"
         const val KEY_ELAPSED_SECONDS = "elapsed_seconds"
         const val KEY_DISTANCE_METERS = "distance_meters"
@@ -230,6 +253,7 @@ class SimulatorService : Service() {
         const val KEY_CADENCE_SPM = "cadence_spm"
         const val KEY_STEPS = "steps"
         const val KEY_ERROR = "error"
+        const val ERROR_INFEASIBLE = "INFEASIBLE"
         const val STATUS_INTERRUPTED = "INTERRUPTED"
         const val STATUS_ERROR = "ERROR"
         private const val CHANNEL_ID = "ratemock-simulation"

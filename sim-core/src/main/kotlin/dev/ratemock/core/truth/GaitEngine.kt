@@ -8,7 +8,7 @@ import dev.ratemock.core.plan.SpeedPlanner
 /** One deterministic fixed-step truth simulation. */
 class GaitEngine(
     private val plan: RunPlan,
-    private val gaitResolver: GaitResolver,
+    private var gaitResolver: GaitResolver,
     private val speedPlanner: SpeedPlanner,
     private val stepSeconds: Double,
 ) {
@@ -20,6 +20,7 @@ class GaitEngine(
     private var stepRemainderMeters = 0.0
     private var state = RunState.STARTING
     private var stopping = false
+    private var targetSpeedOverrideMps: Double? = null
 
     init {
         require(stepSeconds.isFinite() && stepSeconds > 0.0) {
@@ -30,6 +31,14 @@ class GaitEngine(
     fun state(): RunState = state
 
     fun isFinished(): Boolean = state == RunState.FINISHED
+
+    /** Update the live target without resetting acceleration, distance, or footfalls. */
+    fun setTargetSpeed(speedMps: Double, resolver: GaitResolver) {
+        require(speedMps.isFinite() && speedMps > 0.0)
+        check(!isFinished()) { "Simulation is already finished" }
+        targetSpeedOverrideMps = speedMps
+        gaitResolver = resolver
+    }
 
     /** Advances one fixed step and returns the truth sample plus any footfalls. */
     fun advance(): EngineFrame {
@@ -45,7 +54,7 @@ class GaitEngine(
 
         val targetSpeed = when {
             paused || stopping -> 0.0
-            else -> plan.segments[segmentIndex].targetSpeedMps
+            else -> targetSpeedOverrideMps ?: plan.segments[segmentIndex].targetSpeedMps
         }
         val speedSample = speedPlanner.advance(targetSpeed, stepSeconds)
         val gait = gaitResolver.resolveTransient(speedSample.speedMps)

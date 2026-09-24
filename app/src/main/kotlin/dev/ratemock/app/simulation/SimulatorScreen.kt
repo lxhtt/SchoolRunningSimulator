@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import dev.ratemock.app.R
 import dev.ratemock.core.truth.InteractiveSimulation
+import dev.ratemock.core.truth.SimulatorGait
 import dev.ratemock.core.truth.SimulationStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -52,18 +53,25 @@ private data class SimulatorUiSnapshot(
     val distanceMeters: Float = 0f,
     val speedMps: Float = 0f,
     val cadenceSpm: Float = 0f,
+    val manualCadenceSpm: Float = 0f,
+    val fatigueReduction: Float = 0f,
+    val error: String = "",
     val steps: Long = 0L,
 )
 
 @Composable
 fun SimulatorScreen(
-    onStart: (Double, Double) -> Boolean,
+    onStart: (Double, Double, Double?, Double) -> Boolean,
     onCommand: (String) -> Unit,
+    onSetSpeed: (Double) -> Unit,
     onRequestNotification: () -> Unit,
 ) {
     val context = LocalContext.current
     var targetSpeed by rememberSaveable { mutableFloatStateOf(2.7f) }
     var durationMinutes by rememberSaveable { mutableFloatStateOf(10f) }
+    var manualMode by rememberSaveable { mutableStateOf(false) }
+    var manualCadence by rememberSaveable { mutableFloatStateOf(160f) }
+    var fatigueReduction by rememberSaveable { mutableFloatStateOf(0f) }
     var snapshot by remember { mutableStateOf(readSnapshot(context)) }
     var startingAt by remember { mutableStateOf(0L) }
     var launchFailed by remember { mutableStateOf(false) }
@@ -73,8 +81,15 @@ fun SimulatorScreen(
             snapshot = withContext(Dispatchers.IO) { readSnapshot(context) }
             notificationAllowed = hasNotificationPermission(context)
             if (snapshot.status == SimulationStatus.RUNNING.name || snapshot.status == SimulationStatus.PAUSED.name) {
-                targetSpeed = snapshot.targetSpeedMps
+                if (snapshot.status != SimulationStatus.RUNNING.name && snapshot.status != SimulationStatus.PAUSED.name) {
+                    targetSpeed = snapshot.targetSpeedMps
+                }
                 durationMinutes = snapshot.durationSeconds / 60f
+                if (snapshot.manualCadenceSpm > 0f) {
+                    manualMode = true
+                    manualCadence = snapshot.manualCadenceSpm
+                }
+                fatigueReduction = snapshot.fatigueReduction
             }
             if (startingAt != 0L && (snapshot.status == SimulationStatus.RUNNING.name ||
                 snapshot.status == SimulationStatus.PAUSED.name ||
@@ -134,16 +149,62 @@ fun SimulatorScreen(
                 }
             }
         }
+        if (active) {
+            Text(stringResource(R.string.sim_live_speed), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.sim_speed_value, targetSpeed), style = MaterialTheme.typography.titleLarge)
+            Slider(value = targetSpeed, onValueChange = { targetSpeed = (it * 10).roundToInt() / 10f },
+                valueRange = InteractiveSimulation.MIN_SPEED_MPS.toFloat()..InteractiveSimulation.MAX_SPEED_MPS.toFloat(),
+                colors = androidx.compose.material3.SliderDefaults.colors(
+                    thumbColor = MaterialTheme.colorScheme.primary,
+                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                ))
+            OutlinedButton(onClick = { onSetSpeed(targetSpeed.toDouble()) }, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.sim_apply_speed))
+            }
+        }
         if (!active) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(stringResource(R.string.sim_speed_target), style = MaterialTheme.typography.titleSmall)
                 Text(stringResource(R.string.sim_speed_value, targetSpeed),
                     style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace))
-                Text(stringResource(if (targetSpeed < InteractiveSimulation.MODE_BOUNDARY_MPS) R.string.sim_mode_walking
-                    else R.string.sim_mode_running), color = MaterialTheme.colorScheme.tertiary,
-                    style = MaterialTheme.typography.labelLarge)
+                Text(stringResource(if (manualMode) R.string.sim_mode_manual else R.string.sim_mode_auto),
+                    color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.labelLarge)
+                if (manualMode) {
+                    Text(stringResource(R.string.sim_cadence_value, manualCadence), style = MaterialTheme.typography.bodyMedium)
+                }
                 Slider(value = targetSpeed, onValueChange = { targetSpeed = (it * 10).roundToInt() / 10f },
-                    valueRange = InteractiveSimulation.MIN_SPEED_MPS.toFloat()..InteractiveSimulation.MAX_SPEED_MPS.toFloat())
+                    valueRange = InteractiveSimulation.MIN_SPEED_MPS.toFloat()..InteractiveSimulation.MAX_SPEED_MPS.toFloat(),
+                    colors = androidx.compose.material3.SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = { manualMode = false }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.sim_mode_auto)) }
+                    OutlinedButton(onClick = { manualMode = true }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.sim_mode_manual)) }
+                }
+                if (manualMode) {
+                    Text(stringResource(R.string.sim_manual_cadence), style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.sim_cadence_value, manualCadence), style = MaterialTheme.typography.titleLarge)
+                    Slider(value = manualCadence, onValueChange = { manualCadence = (it / 5f).roundToInt() * 5f },
+                        valueRange = SimulatorGait.MIN_CADENCE_SPM.toFloat()..SimulatorGait.MAX_CADENCE_SPM.toFloat(),
+                        colors = androidx.compose.material3.SliderDefaults.colors(
+                            thumbColor = MaterialTheme.colorScheme.tertiary,
+                            activeTrackColor = MaterialTheme.colorScheme.tertiary,
+                            inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ))
+                    Text(stringResource(R.string.sim_step_length_value, targetSpeed * 60f / manualCadence), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(stringResource(R.string.sim_fatigue_reduction), style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.sim_percent_value, (fatigueReduction * 100).roundToInt()), style = MaterialTheme.typography.titleLarge)
+                Slider(value = fatigueReduction, onValueChange = { fatigueReduction = (it * 20).roundToInt() / 20f },
+                    valueRange = 0f..SimulatorGait.MAX_FATIGUE_REDUCTION.toFloat(),
+                    colors = androidx.compose.material3.SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.secondary,
+                        activeTrackColor = MaterialTheme.colorScheme.secondary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ))
                 Text(stringResource(R.string.sim_duration), style = MaterialTheme.typography.titleSmall)
                 Text(stringResource(R.string.sim_minutes_value, durationMinutes.roundToInt()), style = MaterialTheme.typography.titleLarge)
                 Slider(value = durationMinutes, onValueChange = { durationMinutes = it.roundToInt().toFloat() },
@@ -169,14 +230,15 @@ fun SimulatorScreen(
             }
         } else {
             Button(onClick = {
-                launchFailed = !onStart(targetSpeed.toDouble(), durationMinutes.roundToInt() * 60.0)
+                launchFailed = !onStart(targetSpeed.toDouble(), durationMinutes.roundToInt() * 60.0,
+                    if (manualMode) manualCadence.toDouble() else null, fatigueReduction.toDouble())
                 if (!launchFailed) startingAt = System.currentTimeMillis()
             }, enabled = notificationAllowed && startingAt == 0L, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(if (startingAt != 0L) R.string.sim_starting else R.string.sim_start))
             }
         }
-        if (launchFailed || snapshot.status == SimulatorService.STATUS_ERROR) {
-            Text(stringResource(R.string.sim_error_note), color = MaterialTheme.colorScheme.error)
+        if (snapshot.error == SimulatorService.ERROR_INFEASIBLE) {
+            Text(stringResource(R.string.sim_infeasible_note), color = MaterialTheme.colorScheme.error)
         }
         if (snapshot.status == SimulatorService.STATUS_INTERRUPTED) {
             Text(stringResource(R.string.sim_interrupted_note), color = MaterialTheme.colorScheme.error)
@@ -213,6 +275,9 @@ private fun readSnapshot(context: Context): SimulatorUiSnapshot {
         distanceMeters = preferences.getFloat(SimulatorService.KEY_DISTANCE_METERS, 0f),
         speedMps = preferences.getFloat(SimulatorService.KEY_SPEED_MPS, 0f),
         cadenceSpm = preferences.getFloat(SimulatorService.KEY_CADENCE_SPM, 0f),
+        manualCadenceSpm = preferences.getFloat(SimulatorService.KEY_MANUAL_CADENCE_SPM, 0f),
+        fatigueReduction = preferences.getFloat(SimulatorService.KEY_FATIGUE_REDUCTION, 0f),
+        error = preferences.getString(SimulatorService.KEY_ERROR, "") ?: "",
         steps = preferences.getLong(SimulatorService.KEY_STEPS, 0L),
     )
 }

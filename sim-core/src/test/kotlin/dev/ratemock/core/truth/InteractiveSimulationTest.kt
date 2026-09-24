@@ -58,6 +58,50 @@ class InteractiveSimulationTest {
     }
 
     @Test
+    fun `manual cadence remains fixed while speed target changes`() {
+        val session = InteractiveSimulation(2.7, 30.0, manualCadenceSpm = 140.0)
+        val first = session.advanceBy(4.0)
+        assertEquals(140.0, first.cadenceSpm, 1e-8)
+        session.setTargetSpeed(2.3)
+        val second = session.advanceBy(4.0)
+        assertEquals(140.0, second.cadenceSpm, 1e-8)
+        assertEquals(2.3, second.targetSpeedMps, 1e-8)
+        assertTrue(second.distanceMeters > first.distanceMeters)
+        assertFailsWith<IllegalArgumentException> { session.setTargetSpeed(5.0) }
+        assertEquals(2.3, session.snapshot().targetSpeedMps, 1e-8)
+    }
+
+    @Test
+    fun `automatic mode switches on a live target change`() {
+        val session = InteractiveSimulation(1.5, 30.0)
+        session.advanceBy(3.0)
+        session.setTargetSpeed(3.0)
+        val after = session.advanceBy(3.0)
+        assertEquals(GaitMode.RUNNING, after.mode)
+        assertEquals(170.0, after.cadenceSpm, 1e-8)
+    }
+
+    @Test
+    fun `optional slowdown starts after seventy percent and never changes the base target`() {
+        val session = InteractiveSimulation(3.0, 20.0, fatigueReduction = 0.2)
+        val before = session.advanceBy(10.0)
+        assertEquals(3.0, before.effectiveTargetSpeedMps, 1e-8)
+        val after = session.advanceBy(9.0)
+        assertTrue(after.effectiveTargetSpeedMps < 3.0)
+        assertTrue(after.effectiveTargetSpeedMps > 2.4)
+        assertEquals(3.0, after.targetSpeedMps, 1e-8)
+        assertFailsWith<IllegalArgumentException> { InteractiveSimulation(2.0, 30.0, 100.0, 0.5) }
+        assertFailsWith<IllegalArgumentException> { InteractiveSimulation(5.0, 30.0, 100.0) }
+    }
+
+    @Test
+    fun `manual preview reports requested stride and does not silently clamp cadence`() {
+        val gait = SimulatorGait.preview(2.7, 140.0)
+        assertEquals(140.0, gait.cadenceSpm, 1e-8)
+        assertEquals(2.7 * 60.0 / 140.0, gait.stepLengthMeters, 1e-8)
+    }
+
+    @Test
     fun `rejects invalid settings and elapsed time`() {
         assertFailsWith<IllegalArgumentException> { InteractiveSimulation(0.0, 30.0) }
         assertFailsWith<IllegalArgumentException> { InteractiveSimulation(5.1, 30.0) }
