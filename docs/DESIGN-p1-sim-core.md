@@ -1,8 +1,8 @@
 # P1 设计：`sim-core` 仿真内核
 
-> 状态：设计待评审。本文只描述设计，**未实现、未测试**。
-> 前置：P0 已通过云端实测（run `35848681022`：JDK 17/21 单测 14/14、lint、debug APK）。
-> 已确认的选择：**分段配速 + 平滑过渡**、**可配置折线路线**、**步频随速度变化（A2）**、**交付库 + 单测 + 最小 CLI（B1）**、**默认参数全部标注未校准**、**计划通过实跑获取校准数据**。
+> 状态：S1 已实现并通过云端验证；S2–S7 仍是设计/待实现。
+> 本文持续作为 P1 的设计基线；已实现代码以 `sim-core/src/main/kotlin/dev/ratemock/core/feasibility/` 为准。
+> 前置：P0 已通过云端实测（run `35848681022`：JDK 17/21 单测 14/14、lint、debug APK）。S1 验证 run：[`35958878288`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/35958878288)。
 
 ## 1. 范围
 
@@ -37,7 +37,9 @@
 
 ### 1.4 建议交付顺序
 
-P1 较大，按可单独验收的切片推进，每片都可以单独跑 CI：
+P1 较大，按可单独验收的切片推进，每片都可以单独跑 CI。
+
+> S1 已完成并通过 run `35958878288`；下一个实现切片是 S2：配置、运行计划和速度平滑。
 
 | 切片 | 内容 | 验收 |
 |---|---|---|
@@ -51,7 +53,18 @@ P1 较大，按可单独验收的切片推进，每片都可以单独跑 CI：
 
 S1–S6 是纯 JVM 单测；S5、S6 才用到 CLI；S7 是 Android 工作，需要真机验证。
 
-## 2. 数学基础
+### 1.5 S1 实施结果
+
+S1 已落地并由 GitHub Actions run [`35958878288`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/35958878288) 实测通过：
+
+- `GaitLimits`：严格校验稳定步频/步长区间，静止状态单独处理。
+- `FeasibilitySolver`：端点可行性判据、精确冲突报告、单速度的可行步频/步长区间；包含浮点边界回归保护。
+- `CadencePolicy`：`PowerLawCadence`、`LinearCadence`、`FixedCadence`。
+- `GaitResolver`：策略输出夹取到可行区间，保留原始模型值和 `clamped` 标记；恒等式仍成立。
+- 测试报告：`GaitLimitsTest` 4、`GaitKinematicsTest` 14、`FeasibilitySolverTest` 12、`CadencePolicyTest` 7、`GaitResolverTest` 13，共 **50/50 通过**；JDK 17 与 JDK 21 结果一致。
+- 同一 workflow 的 Android lint 与 debug APK job 也通过；S1 没有增加 Android 权限或改变 P0 APK 行为。
+
+## 2. 数学基础（可行性判据）
 
 ### 2.1 可行性判据
 
