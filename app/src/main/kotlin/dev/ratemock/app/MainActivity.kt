@@ -244,6 +244,7 @@ private data class RecorderUiSnapshot(
     val actualCadenceSpm: Float?,
     val cadenceSource: String,
     val locationQuality: String,
+    val counterQuality: String,
     val summary: String,
     val latest: String,
     val logs: List<String>,
@@ -274,6 +275,14 @@ private fun RecorderPanel(context: Context) {
                 Text(snapshot.actualCadenceSpm?.let { stringResource(R.string.real_actual_cadence, it) }
                     ?: stringResource(if (snapshot.cadenceSource == "warming_up") R.string.real_cadence_warming else R.string.real_cadence_unavailable))
                 Text(stringResource(R.string.real_location_status, snapshot.locationQuality))
+                Text(stringResource(R.string.real_counter_status, when (snapshot.counterQuality) {
+                    "RESET" -> stringResource(R.string.real_counter_reset)
+                    "STALE" -> stringResource(R.string.real_counter_stale)
+                    "DIFFERENT" -> stringResource(R.string.real_counter_different)
+                    "CONSISTENT" -> stringResource(R.string.real_counter_consistent)
+                    "BASELINE" -> stringResource(R.string.real_counter_baseline)
+                    else -> stringResource(R.string.real_counter_waiting)
+                }))
             }
             Text(
                 snapshot.heartbeatAgeMs?.let { age -> stringResource(R.string.recorder_heartbeat, age / 1_000L) }
@@ -342,6 +351,10 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
         cadenceSource = preferences.getString(RecorderService.KEY_CADENCE_SOURCE, "unavailable") ?: "unavailable",
         locationQuality = if (lastFixNs == 0L) "等待 GPS" else if (nowNs - lastFixNs !in 0L..5_000_000_000L) "定位已过期"
             else if (preferences.getString(RecorderService.KEY_LOCATION_QUALITY, "waiting") == "fresh") "定位新鲜" else "精度较低",
+        counterQuality = preferences.getString(RecorderService.KEY_COUNTER_QUALITY, "WAITING")?.let { quality ->
+            val counterNs = preferences.getLong(RecorderService.KEY_LAST_COUNTER_NS, 0L)
+            if (quality != "RESET" && counterNs > 0L && nowNs - counterNs > 5_000_000_000L) "STALE" else quality
+        } ?: "WAITING",
         summary = if (sampleCount == 0) {
             context.getString(R.string.recorder_no_summary)
         } else {

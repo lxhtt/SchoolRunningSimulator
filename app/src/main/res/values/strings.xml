@@ -16,6 +16,13 @@
     <string name="real_cadence_warming">当前步频：等待更多逐步事件</string>
     <string name="real_cadence_unavailable">当前步频：传感器不可用</string>
     <string name="real_location_status">GPS：%1$s</string>
+    <string name="real_counter_status">累计计数器核对：%1$s</string>
+    <string name="real_counter_waiting">等待计数器</string>
+    <string name="real_counter_baseline">等待足够逐步事件</string>
+    <string name="real_counter_consistent">与逐步事件基本一致</string>
+    <string name="real_counter_different">与逐步事件不一致（可能延迟）</string>
+    <string name="real_counter_reset">计数器已重置，本次不再核对</string>
+    <string name="real_counter_stale">计数器超过 5 秒未更新</string>
     <string name="recorder_title">实跑记录器 · S7</string>
     <string name="recorder_description">前台服务可在息屏时记录 GPS 和累计步数。首次使用请授予定位、活动识别和通知权限。</string>
     <string name="recorder_permissions">申请记录权限</string>
