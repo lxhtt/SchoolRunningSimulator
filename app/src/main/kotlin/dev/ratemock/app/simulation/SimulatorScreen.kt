@@ -4,7 +4,9 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,7 +45,17 @@ import dev.ratemock.core.truth.SimulationStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.io.File
+import kotlin.math.min
 import kotlin.math.roundToInt
+
+private data class HistoryPoint(
+    val elapsedSeconds: Float,
+    val speedMps: Float,
+    val cadenceSpm: Float,
+    val eastM: Float,
+    val northM: Float,
+)
 
 private data class SimulatorUiSnapshot(
     val status: String = "IDLE",
@@ -58,6 +70,7 @@ private data class SimulatorUiSnapshot(
     val fatigueReduction: Float = 0f,
     val error: String = "",
     val steps: Long = 0L,
+    val historyFile: String = "",
 )
 
 @Composable
@@ -75,12 +88,14 @@ fun SimulatorScreen(
     var fatigueReduction by rememberSaveable { mutableFloatStateOf(0f) }
     var lastObservedTarget by remember { mutableFloatStateOf(Float.NaN) }
     var snapshot by remember { mutableStateOf(readSnapshot(context)) }
+    var history by remember { mutableStateOf(emptyList<HistoryPoint>()) }
     var startingAt by remember { mutableStateOf(0L) }
     var launchFailed by remember { mutableStateOf(false) }
     var notificationAllowed by remember { mutableStateOf(hasNotificationPermission(context)) }
     LaunchedEffect(context) {
         while (true) {
             snapshot = withContext(Dispatchers.IO) { readSnapshot(context) }
+            history = withContext(Dispatchers.IO) { readSimulationHistory(context, snapshot.historyFile) }
             notificationAllowed = hasNotificationPermission(context)
             if (snapshot.status == SimulationStatus.RUNNING.name || snapshot.status == SimulationStatus.PAUSED.name) {
                 if (snapshot.targetSpeedMps != lastObservedTarget) {
@@ -158,6 +173,9 @@ fun SimulatorScreen(
                     }
                     Text(stringResource(R.string.sim_steps_value, snapshot.steps), style = MaterialTheme.typography.titleMedium)
                 }
+            }
+            if (history.isNotEmpty()) {
+                SimulationHistory(history)
             }
         }
         if (active) {
@@ -265,11 +283,79 @@ fun SimulatorScreen(
 }
 
 @Composable
+private fun SimulationHistory(points: List<HistoryPoint>) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.sim_history_title), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.sim_history_provenance), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.sim_speed_curve), style = MaterialTheme.typography.labelLarge)
+            HistoryCurve(points.map { it.speedMps }, MaterialTheme.colorScheme.primary)
+            Text(stringResource(R.string.sim_cadence_curve), style = MaterialTheme.typography.labelLarge)
+            HistoryCurve(points.map { it.cadenceSpm }, MaterialTheme.colorScheme.tertiary)
+            Text(stringResource(R.string.sim_route_synthetic), style = MaterialTheme.typography.labelLarge)
+            HistoryRoute(points)
+        }
+    }
+}
+
+@Composable
+private fun HistoryCurve(values: List<Float>, color: androidx.compose.ui.graphics.Color) {
+    Canvas(modifier = Modifier.fillMaxWidth().height(84.dp)) {
+        if (values.size < 2) return@Canvas
+        val min = values.minOrNull() ?: return@Canvas
+        val max = values.maxOrNull() ?: return@Canvas
+        val span = (max - min).coerceAtLeast(0.001f)
+        val step = size.width / (values.lastIndex.coerceAtLeast(1))
+        values.zipWithNext().forEachIndexed { index, pair ->
+            drawLine(color, androidx.compose.ui.geometry.Offset(index * step, size.height - (pair.first - min) / span * size.height),
+                androidx.compose.ui.geometry.Offset((index + 1) * step, size.height - (pair.second - min) / span * size.height), strokeWidth = 3f)
+        }
+    }
+}
+
+@Composable
+private fun HistoryRoute(points: List<HistoryPoint>) {
+    val color = MaterialTheme.colorScheme.secondary
+    Canvas(modifier = Modifier.fillMaxWidth().height(120.dp)) {
+        if (points.size < 2) return@Canvas
+        val minEast = points.minOf { it.eastM }
+        val maxEast = points.maxOf { it.eastM }
+        val minNorth = points.minOf { it.northM }
+        val maxNorth = points.maxOf { it.northM }
+        val eastSpan = (maxEast - minEast).coerceAtLeast(0.001f)
+        val northSpan = (maxNorth - minNorth).coerceAtLeast(0.001f)
+        val scale = min(size.width / eastSpan, size.height / northSpan) * 0.86f
+        val offsetX = (size.width - eastSpan * scale) / 2f
+        val offsetY = (size.height - northSpan * scale) / 2f
+        points.zipWithNext().forEach { (a, b) ->
+            drawLine(color,
+                androidx.compose.ui.geometry.Offset(offsetX + (a.eastM - minEast) * scale, size.height - offsetY - (a.northM - minNorth) * scale),
+                androidx.compose.ui.geometry.Offset(offsetX + (b.eastM - minEast) * scale, size.height - offsetY - (b.northM - minNorth) * scale), strokeWidth = 3f)
+        }
+    }
+}
+
+@Composable
 private fun Metric(label: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
     }
+}
+
+private fun readSimulationHistory(context: Context, fileName: String): List<HistoryPoint> {
+    if (!fileName.matches(Regex("simulation-[0-9]+\\.csv"))) return emptyList()
+    val file = File(context.filesDir, "simulations/$fileName")
+    if (!file.isFile) return emptyList()
+    return runCatching {
+        file.useLines { lines ->
+            lines.drop(2).mapNotNull { line ->
+                val c = line.split(',')
+                if (c.size < 6) null else HistoryPoint(c[0].toFloat(), c[2].toFloat(), c[3].toFloat(), c[4].toFloat(), c[5].toFloat())
+            }.toList()
+        }
+    }.getOrDefault(emptyList())
 }
 
 private fun hasNotificationPermission(context: Context): Boolean =
@@ -297,5 +383,6 @@ private fun readSnapshot(context: Context): SimulatorUiSnapshot {
         fatigueReduction = preferences.getFloat(SimulatorService.KEY_FATIGUE_REDUCTION, 0f),
         error = preferences.getString(SimulatorService.KEY_ERROR, "") ?: "",
         steps = preferences.getLong(SimulatorService.KEY_STEPS, 0L),
+        historyFile = preferences.getString(SimulatorService.KEY_HISTORY_FILE, "") ?: "",
     )
 }

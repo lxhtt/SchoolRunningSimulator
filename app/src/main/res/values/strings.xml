@@ -69,7 +69,11 @@
     <string name="sim_stop">停止</string>
     <string name="sim_permission">允许通知</string>
     <string name="sim_permission_needed">允许通知后，息屏期间才能看到实时进度。</string>
-    <string name="sim_progress">模拟进度</string>
+    <string name="sim_history_title">模拟会话曲线</string>
+    <string name="sim_history_provenance">私有历史 · 模拟数据 · 未经个人校准</string>
+    <string name="sim_speed_curve">速度 · 米/秒</string>
+    <string name="sim_cadence_curve">步频 · 步/分</string>
+    <string name="sim_route_synthetic">合成路线 · 本地坐标，非 GPS</string>
     <string name="sim_time_value">%1$d:%2$02d / %3$d:%4$02d</string>
     <string name="sim_distance">距离</string>
     <string name="sim_speed">当前速度</string>

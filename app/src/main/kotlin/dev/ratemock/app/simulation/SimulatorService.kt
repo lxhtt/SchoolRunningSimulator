@@ -18,6 +18,10 @@ import dev.ratemock.app.R
 import dev.ratemock.core.truth.InteractiveSimulation
 import dev.ratemock.core.truth.SimulationSnapshot
 import dev.ratemock.core.truth.SimulationStatus
+import java.io.BufferedWriter
+import java.io.File
+import java.io.FileWriter
+import java.io.IOException
 
 /** A user-initiated, time-bounded simulation. It never reads or injects device location. */
 class SimulatorService : Service() {
@@ -25,6 +29,8 @@ class SimulatorService : Service() {
     private lateinit var handler: Handler
     private lateinit var wakeLock: PowerManager.WakeLock
     private var session: InteractiveSimulation? = null
+    private var historyWriter: BufferedWriter? = null
+    private var historyWritten = 0
     private var started = false
     private var lastTickMs = 0L
     private var lastNotificationMs = 0L
@@ -78,12 +84,23 @@ class SimulatorService : Service() {
                     ?.takeIf { it.isFinite() }
                 val slowdown = intent?.getDoubleExtra(EXTRA_FATIGUE_REDUCTION, 0.0) ?: 0.0
                 handler.post {
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(KEY_HISTORY_FILE).remove(KEY_ERROR).apply()
                     try {
                         session = InteractiveSimulation(speed, duration, cadence, slowdown)
+                        val directory = File(filesDir, "simulations").apply { mkdirs() }
+                        val file = File(directory, "simulation-${System.currentTimeMillis()}.csv")
+                        historyWriter = BufferedWriter(FileWriter(file)).also {
+                            it.appendLine("# provenance=simulation;calibration=uncalibrated")
+                            it.appendLine("elapsed_s,distance_m,speed_mps,cadence_spm,east_m,north_m")
+                            it.flush()
+                        }
+                        historyWritten = 0
+                        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putString(KEY_HISTORY_FILE, file.name).remove(KEY_ERROR).apply()
                         lastTickMs = SystemClock.elapsedRealtime()
                         publish(forceNotification = true)
                         handler.postDelayed(ticker, TICK_MS)
-                    } catch (error: IllegalArgumentException) {
+                    } catch (error: Exception) {
                         failure(error)
                     }
                 }
@@ -123,6 +140,7 @@ class SimulatorService : Service() {
 
     private fun publish(forceNotification: Boolean = false) {
         val snapshot = session?.snapshot() ?: return
+        writeHistory()
         if (snapshot.status == SimulationStatus.RUNNING && !wakeLock.isHeld) {
             val remainingMs = ((snapshot.durationSeconds - snapshot.elapsedSeconds).coerceAtLeast(0.0) * 1_000).toLong()
             wakeLock.acquire(remainingMs + WAKE_LOCK_MARGIN_MS)
@@ -145,6 +163,7 @@ class SimulatorService : Service() {
             .putLong(KEY_STEPS, snapshot.steps)
             .apply()
         if (snapshot.status !in ACTIVE) {
+            closeHistory()
             handler.removeCallbacks(ticker)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -157,6 +176,28 @@ class SimulatorService : Service() {
                 lastNotificationMs = now
             }
         }
+    }
+
+    private fun writeHistory() {
+        val samples = session?.history() ?: return
+        val out = historyWriter ?: return
+        try {
+            for (index in historyWritten until samples.size) {
+                val point = samples[index]
+                out.appendLine(listOf(point.timeSeconds, point.distanceMeters, point.speedMps,
+                    point.cadenceSpm, point.eastMeters, point.northMeters).joinToString(","))
+            }
+            out.flush()
+            historyWritten = samples.size
+        } catch (_: IOException) {
+            closeHistory()
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_ERROR, ERROR_HISTORY_WRITE).apply()
+        }
+    }
+
+    private fun closeHistory() {
+        runCatching { historyWriter?.close() }
+        historyWriter = null
     }
 
     private fun progressText(snapshot: SimulationSnapshot): String {
@@ -198,7 +239,8 @@ class SimulatorService : Service() {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    private fun failure(error: RuntimeException) {
+    private fun failure(error: Exception) {
+        closeHistory()
         releaseWakeLock()
         session = null
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -217,6 +259,7 @@ class SimulatorService : Service() {
     override fun onDestroy() {
         handler.removeCallbacks(ticker)
         handler.post {
+            closeHistory()
             releaseWakeLock()
             if (session?.snapshot()?.status in ACTIVE) {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_STATUS, STATUS_INTERRUPTED).apply()
@@ -252,6 +295,8 @@ class SimulatorService : Service() {
         const val KEY_SPEED_MPS = "speed_mps"
         const val KEY_CADENCE_SPM = "cadence_spm"
         const val KEY_STEPS = "steps"
+        const val KEY_HISTORY_FILE = "history_file"
+        const val ERROR_HISTORY_WRITE = "HISTORY_WRITE"
         const val KEY_ERROR = "error"
         const val ERROR_INFEASIBLE = "INFEASIBLE"
         const val STATUS_INTERRUPTED = "INTERRUPTED"

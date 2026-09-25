@@ -26,6 +26,8 @@ class InteractiveSimulation(
     private var speedMps = 0.0
     private var cadenceSpm = 0.0
     private var steps = 0L
+    private val history = ArrayList<TruthSample>()
+    private var nextHistorySecond = 1
     private var status = SimulationStatus.RUNNING
 
     init {
@@ -50,6 +52,8 @@ class InteractiveSimulation(
         manualCadenceSpm, fatigueReduction,
     )
 
+    fun history(): List<TruthSample> = history.toList()
+
     fun advanceBy(seconds: Double): SimulationSnapshot {
         require(seconds.isFinite() && seconds >= 0.0) { "Elapsed time must be finite and non-negative" }
         if (status != SimulationStatus.RUNNING) return snapshot()
@@ -67,6 +71,10 @@ class InteractiveSimulation(
             speedMps = frame.truth.speedMps
             cadenceSpm = frame.truth.cadenceSpm
             steps += frame.steps.size
+            if (frame.truth.timeSeconds + 1e-8 >= nextHistorySecond && history.size < MAX_HISTORY_POINTS) {
+                history += frame.truth
+                nextHistorySecond += 1
+            }
         }
         if (engine.isFinished()) {
             status = SimulationStatus.COMPLETED
@@ -107,6 +115,7 @@ class InteractiveSimulation(
         const val MIN_DURATION_SECONDS = 10.0
         const val MAX_DURATION_SECONDS = 3_600.0
         private const val STEP_SECONDS = 0.1
+        private const val MAX_HISTORY_POINTS = 3_600
     }
 }
 

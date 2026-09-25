@@ -1,6 +1,7 @@
 package dev.ratemock.core.truth
 
 import dev.ratemock.core.calibration.GaitMode
+import kotlin.math.roundToInt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -16,6 +17,16 @@ class InteractiveSimulationTest {
         assertTrue(walking.steps > 0)
         assertTrue(running.steps > 0)
         assertTrue(running.cadenceSpm > walking.cadenceSpm)
+    }
+
+    @Test
+    fun `history samples once per second and freezes while paused`() {
+        val session = InteractiveSimulation(2.7, 30.0)
+        session.advanceBy(3.2)
+        assertEquals(listOf(1, 2, 3), session.history().map { it.timeSeconds.roundToInt() })
+        session.pause()
+        session.advanceBy(5.0)
+        assertEquals(3, session.history().size)
     }
 
     @Test
