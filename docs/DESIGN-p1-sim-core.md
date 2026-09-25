@@ -49,7 +49,7 @@ P1 较大，按可单独验收的切片推进，每片都可以单独跑 CI。
 | **S4** | `Route` + `RouteProjector` + `GpsStream` + `GaussMarkov` | 噪声统计与投影测试 |
 | **S5** | `export/*` + `cli/Main` | 导出回读与端到端冒烟 |
 | **S6** | `calibration/*`：CSV 导入 + 拟合 + 报告 + CLI 子命令 | 合成数据可还原参数；样本不足被拒绝 |
-| **S7** | Android 记录器：前台服务（type=location）+ `TYPE_STEP_COUNTER` → 原始 CSV；`scripts/recording_to_calibration.py` 以稳定窗口转换为 S6 可导入 CSV | 真机原始记录已验证；桥接输出对当前个人文件因 GPS/速度范围不足保持 `insufficient`，不会伪造可用拟合 |
+| **S7** | Android 记录器：前台服务（type=location）+ `TYPE_STEP_COUNTER` → 原始 CSV；`scripts/recording_to_calibration.py` 以稳定窗口转换为 S6 可导入 CSV | 真机原始记录已验证；桥接输出对当前个人文件因低精度、旧定位和范围外窗口保持 `insufficient`，不会伪造可用拟合 |
 
 S1–S6 是纯 JVM 单测；S5、S6 才用到 CLI；S7 是 Android 工作，需要真机验证。
 
@@ -72,7 +72,7 @@ S1 已落地并由 GitHub Actions run [`35958878288`](https://github.com/lxhtt/S
 - `CalibrationCsvParser`、`CalibrationFitter`：校验至少 8 条、速度跨度和正权重，支持幂律/线性加权最小二乘、R²、残差和拟合速度范围。
 - `CalibrationJson` 与 CLI `calibrate` 子命令：输出参数来源范围和 `uncalibrated=false` 标记，超出拟合范围可由调用方显式警告。
 - S7 `RecorderService`：Android 前台 `location` 服务，同时记录 GPS 和 `TYPE_STEP_COUNTER`，CSV 写入 app 私有 `recordings/` 目录；界面提供权限申请、开始/停止控制。已验证连续写入 185 个样本；设备息屏时 MIUI 可冻结唤醒锁和回调，应用保留原始数据并诚实报告限制。
-- S7→S6 桥接：`scripts/recording_to_calibration.py` 读取 S7 原始 CSV，按 15 秒稳定窗口计算 GPS 速度/累计步数差分步频，过滤缺口、精度、速度/步频边界和不稳定段，输出 `speed_mps,cadence_spm,weight` 与质量报告。当前个人真机文件得到 `insufficient`，不会静默放宽筛选。
+- S7→S6 桥接：`scripts/recording_to_calibration.py` 读取 S7 原始 CSV，按 15 秒稳定窗口计算 GPS 速度/累计步数差分步频，过滤缺口、精度、旧定位、计数器回退、速度/步频边界和不稳定段，输出 `speed_mps,cadence_spm,weight` 与质量报告。当前个人真机文件得到 `insufficient`，不会静默放宽筛选。
 - 测试报告：`GaitLimitsTest` 4、`GaitKinematicsTest` 14、`FeasibilitySolverTest` 12、`CadencePolicyTest` 7、`GaitResolverTest` 13、`RunPlanTest` 5、`SpeedPlannerTest` 7、`TruthTypesTest` 1、`GaitEngineTest` 7、`RouteTest` 4、`GaussMarkovNoiseTest` 5、`ExportersTest` 4、`CalibrationTest` 7，共 **90/90 通过**；JDK 17 与 JDK 21 结果一致。
 - 同一 workflow 的 Android lint 与 debug APK job 也通过；S1 没有增加 Android 权限或改变 P0 APK 行为。
 
@@ -367,9 +367,19 @@ speed_mps,cadence_spm,weight
   - 无可用 GPX、不同来源的步数重复记录、定位精度差或长时间轨迹缺口都会减少可用样本；**不能**为凑满拟合最低行数而填补或合并这些记录。
   - 原始导出包含其他敏感健康信息，不放进项目目录、CI、Git 或任何公共产物。提取 CSV、质量报告及个人拟合 JSON 仅保存在本机私有目录。
 
+#### 路径二：App 内前台服务记录器（S7）
+
+定位和步数同步逐秒记录，但 GPS 缓存、精度及传感器上报延迟仍须离线筛查。
+
+- 组件：前台服务（`foregroundServiceType="location"`）+ `LocationManager` 与 `TYPE_STEP_COUNTER`。
+- 权限：`ACCESS_FINE_LOCATION`、`ACTIVITY_RECOGNITION`（Android 10+ 读步数所需）、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_LOCATION`。
+- 输出：带时间戳的 `(lat, lon, speed_mps, accuracy_m, cumulative_steps)` 原始 CSV；再由同一个离线脚本或 S6 的窗口化逻辑转成 §11.1 的配对 CSV。
+- 顺带价值：给 P3 真跑模式踩坑（前台服务生命周期、权限、传感器可用性）。
+- 注意：记录的是用户自己的运动数据，只存在本机，不上传；仍需在文档与界面上说明这一点。
+
 #### S7→S6 桥接
 
-`scripts/recording_to_calibration.py` 将 S7 原始 CSV 转成 S6 所需的聚合输入：默认 15 秒窗口，使用 GPS 速度（或坐标差分）与累计步数差分，剔除缺口、低精度、速度/步频越界和不稳定窗口，输出 `speed_mps,cadence_spm,weight` 及 JSON 质量报告。脚本不输出位置和时间戳到校准 CSV；原始文件和派生文件都必须放在仓库外的私有目录。
+`scripts/recording_to_calibration.py` 将 S7 原始 CSV 转成 S6 所需的聚合输入：默认 15 秒窗口，使用 GPS 速度（缺失时以坐标差分估计）与累计步数差分，剔除缺口、低精度、旧定位、计数器回退、速度/步频越界和不稳定窗口，输出 `speed_mps,cadence_spm,weight` 及 JSON 质量报告。新记录的 `location_age_s` 是写入时距最新 GPS fix 的秒数，必须不超过窗口允许的定位间隔；旧格式没有该列，重复坐标的窗口保守拒绝。`insufficient` 表示未达到 S6 的 8 个窗口和 0.5 m/s 速度跨度，不能据此拟合。脚本不输出位置和时间戳到校准 CSV，且禁止输出路径覆盖原始 CSV；原始文件和派生文件都必须放在仓库外的私有目录。
 
 ```bash
 umask 077
@@ -377,19 +387,12 @@ python3 scripts/recording_to_calibration.py \
   --input '/private/recording.csv' \
   --out '/private/calibration.csv' \
   --report '/private/calibration-quality.json'
-./gradlew -p sim-core run --args='calibrate --input /private/calibration.csv --out /private/fitted.json --model power'
+# 仅当报告中 s6_input_valid 为 true，且人工确认运动段与数据来源后，
+# 使用 CI 的 sim-core-cli 产物在本机离线运行；不上传个人数据或运行本地 Gradle。
+/path/to/sim-core-cli/bin/sim-core calibrate --input /private/calibration.csv --out /private/fitted.json --model power
 ```
 
-当前设备记录（185 样本）经桥接后为 `insufficient`：GPS 精度和速度稳定性不足以形成 8 个有效窗口。这是保守的质量结论，不能通过放宽过滤器伪造个人模型。
-
-
-单次、但采样干净：GPS 与步数传感器同步逐秒记录，正是校准需要的稳态关系数据。
-
-- 组件：前台服务（`foregroundServiceType="location"`）+ `LocationManager`/`FusedLocationProvider` 与 `TYPE_STEP_COUNTER`。
-- 权限：`ACCESS_FINE_LOCATION`、`ACTIVITY_RECOGNITION`（Android 10+ 读步数所需）、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_LOCATION`。
-- 输出：带时间戳的 `(lat, lon, speed_mps, accuracy_m, cumulative_steps)` 原始 CSV；再由同一个离线脚本或 S6 的窗口化逻辑转成 §11.1 的配对 CSV。
-- 顺带价值：给 P3 真跑模式踩坑（前台服务生命周期、权限、传感器可用性）。
-- 注意：记录的是用户自己的运动数据，只存在本机，不上传；仍需在文档与界面上说明这一点。
+当前设备记录（185 样本）经桥接后为 `insufficient`：12 个候选窗口中 3 个精度不足、5 个定位过旧/重复、4 个速度或步频越界，没有有效窗口。这是保守的质量结论，不能通过放宽过滤器伪造个人模型。真机老版本 CSV 没有 `location_age_s`，新格式还需后续设备实测。
 
 两种路径的输出最终都汇入 `calibration.csv`，由 S6 拟合，区别只在采样粒度与覆盖范围。
 

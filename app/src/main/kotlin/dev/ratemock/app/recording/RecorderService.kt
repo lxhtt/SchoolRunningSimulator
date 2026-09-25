@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import dev.ratemock.app.R
 import java.io.BufferedWriter
 import java.io.File
@@ -86,7 +87,7 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         recordingFile = File(directory, "recording-${System.currentTimeMillis()}.csv")
         recordingStartedAtMs = System.currentTimeMillis()
         writer = BufferedWriter(FileWriter(recordingFile, false)).also {
-            it.appendLine("timestamp_utc,elapsed_s,latitude_deg,longitude_deg,altitude_m,horizontal_accuracy_m,speed_mps,step_counter_total")
+            it.appendLine("timestamp_utc,elapsed_s,latitude_deg,longitude_deg,altitude_m,horizontal_accuracy_m,speed_mps,step_counter_total,location_age_s")
             it.flush()
         }
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -151,6 +152,7 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
             if (location.hasAccuracy()) location.accuracy else "",
             if (location.hasSpeed()) location.speed else "",
             latestStepCounter ?: "",
+            (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos).coerceAtLeast(0L) / 1_000_000_000.0,
         ).joinToString(",")
         synchronized(writerLock) {
             val out = writer ?: return

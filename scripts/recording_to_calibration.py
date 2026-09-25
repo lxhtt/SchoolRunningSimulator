@@ -37,6 +37,7 @@ class Sample:
     accuracy_m: float | None
     supplied_speed_mps: float | None
     steps: float | None
+    location_age_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,10 @@ class Window:
 
 
 def parse_time(value: str) -> float:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.utcoffset() is None:
+        raise ValueError("timestamp must include a UTC offset")
+    return parsed.timestamp()
 
 
 def finite(value: str | None) -> float | None:
@@ -75,17 +79,22 @@ def read_samples(path: Path) -> list[Sample]:
                 timestamp = parse_time(row["timestamp_utc"])
             except (TypeError, ValueError) as error:
                 raise ValueError(f"invalid location/time at row {line}: {error}") from error
-            if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
-                raise ValueError(f"invalid coordinates at row {line}")
+            if not (math.isfinite(timestamp) and math.isfinite(latitude) and math.isfinite(longitude)
+                    and -90 <= latitude <= 90 and -180 <= longitude <= 180):
+                raise ValueError(f"invalid coordinates/time at row {line}")
+            age = finite(row.get("location_age_s"))
+            # A present but empty age field is not the legacy format.
             rows.append(Sample(
                 timestamp, latitude, longitude,
                 finite(row.get("horizontal_accuracy_m")),
                 finite(row.get("speed_mps")),
                 finite(row.get("step_counter_total")),
+                age if age is not None or "location_age_s" not in reader.fieldnames else -1.0,
             ))
-    rows.sort(key=lambda sample: sample.timestamp_s)
     if len(rows) < 2:
         raise ValueError("recording requires at least two samples")
+    if any(second.timestamp_s <= first.timestamp_s for first, second in zip(rows, rows[1:])):
+        raise ValueError("recording timestamps must be strictly increasing")
     return rows
 
 
@@ -112,10 +121,11 @@ def stable_windows(
     max_gap_s: float = DEFAULT_MAX_GAP_S,
     max_accuracy_m: float = DEFAULT_MAX_ACCURACY_M,
 ) -> tuple[list[Window], dict[str, int]]:
-    if window_s <= 0 or max_gap_s <= 0 or max_accuracy_m <= 0:
-        raise ValueError("window, gap, and accuracy limits must be positive")
+    if not all(math.isfinite(value) and value > 0 for value in (window_s, max_gap_s, max_accuracy_m)) or window_s < 1.0:
+        raise ValueError("window (at least 1 second), gap, and accuracy limits must be finite and positive")
     diagnostics = {"input_rows": len(samples), "gap_rejected": 0, "poor_accuracy_rejected": 0,
-                   "missing_steps_rejected": 0, "missing_speed_rejected": 0, "unstable_rejected": 0,
+                   "stale_location_rejected": 0, "missing_steps_rejected": 0,
+                   "step_reset_rejected": 0, "missing_speed_rejected": 0, "unstable_rejected": 0,
                    "out_of_bounds_rejected": 0, "accepted_windows": 0}
     windows: list[Window] = []
     begin = samples[0].timestamp_s
@@ -130,17 +140,30 @@ def stable_windows(
         if any(sample.timestamp_s - previous.timestamp_s > max_gap_s for previous, sample in zip(rows, rows[1:])):
             diagnostics["gap_rejected"] += 1
             continue
-        if any(sample.accuracy_m is not None and sample.accuracy_m > max_accuracy_m for sample in rows):
+        if any(sample.accuracy_m is None or not 0 < sample.accuracy_m <= max_accuracy_m for sample in rows):
             diagnostics["poor_accuracy_rejected"] += 1
+            continue
+        # New recordings carry fix age; older recordings need coordinate changes
+        # to establish that cached Location objects were not repeatedly sampled.
+        ages = [sample.location_age_s for sample in rows]
+        if (any(age is None for age in ages) and not all(age is None for age in ages)) or (
+            all(age is None for age in ages) and
+            any(first.latitude == second.latitude and first.longitude == second.longitude
+                for first, second in zip(rows, rows[1:]))
+        ) or any(age is not None and not 0 <= age <= max_gap_s for age in ages):
+            diagnostics["stale_location_rejected"] += 1
             continue
         speeds = [interval_speed(first, second) for first, second in zip(rows, rows[1:])]
         speeds = [speed for speed in speeds if speed is not None and math.isfinite(speed)]
-        step_values = [sample.steps for sample in rows if sample.steps is not None and math.isfinite(sample.steps)]
-        if len(speeds) < 2:
-            diagnostics["missing_speed_rejected"] += 1
-            continue
-        if len(step_values) < 2 or step_values[-1] < step_values[0]:
+        if any(sample.steps is None or sample.steps < 0 for sample in rows):
             diagnostics["missing_steps_rejected"] += 1
+            continue
+        step_values = [sample.steps for sample in rows]
+        if any(later < earlier for earlier, later in zip(step_values, step_values[1:])):
+            diagnostics["step_reset_rejected"] += 1
+            continue
+        if len(speeds) < len(rows) - 1:
+            diagnostics["missing_speed_rejected"] += 1
             continue
         duration = rows[-1].timestamp_s - rows[0].timestamp_s
         cadence = 60.0 * (step_values[-1] - step_values[0]) / duration
@@ -161,8 +184,13 @@ def stable_windows(
 
 
 def convert(input_path: Path, output_path: Path, report_path: Path, **limits: float) -> dict[str, object]:
+    if len({input_path.resolve(), output_path.resolve(), report_path.resolve()}) != 3:
+        raise ValueError("input, calibration output, and report paths must be distinct")
     samples = read_samples(input_path)
     windows, diagnostics = stable_windows(samples, **limits)
+    speeds = [window.speed_mps for window in windows]
+    cadences = [window.cadence_spm for window in windows]
+    s6_input_valid = len(windows) >= 8 and max(speeds, default=0) - min(speeds, default=0) >= 0.5
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="") as target:
         writer = csv.writer(target)
@@ -172,14 +200,15 @@ def convert(input_path: Path, output_path: Path, report_path: Path, **limits: fl
         "schema_version": 1,
         "source": "ratemock_s7_raw_csv",
         "output": "s6_calibration_csv",
-        "validation_status": "exploratory" if windows else "insufficient",
-        "s6_input_valid": len(windows) >= 8 and max((window.speed_mps for window in windows), default=0) - min((window.speed_mps for window in windows), default=0) >= 0.5,
+        "validation_status": "exploratory" if s6_input_valid else "insufficient",
+        "s6_input_valid": s6_input_valid,
         "windows": len(windows),
-        "speed_range_mps": [min((window.speed_mps for window in windows), default=0), max((window.speed_mps for window in windows), default=0)],
-        "cadence_range_spm": [min((window.cadence_spm for window in windows), default=0), max((window.cadence_spm for window in windows), default=0)],
+        "speed_range_mps": [min(speeds), max(speeds)] if speeds else None,
+        "cadence_range_spm": [min(cadences), max(cadences)] if cadences else None,
         "diagnostics": diagnostics,
         "privacy": "Output contains aggregate calibration windows only; source recording stays private.",
     }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     return report
 

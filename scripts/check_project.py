@@ -117,7 +117,9 @@ def main() -> None:
     require(activity.attrib[ANDROID + "name"] == ".MainActivity", "Wrong launcher class")
     require(activity.attrib[ANDROID + "exported"] == "true", "Launcher must be exported")
     services = {service.attrib[ANDROID + "name"]: service for service in manifest.findall("application/service")}
-    require(services[".recording.RecorderService"].attrib[ANDROID + "foregroundServiceType"] == "location", "Recorder type changed")
+    recorder_source = text("app/src/main/kotlin/dev/ratemock/app/recording/RecorderService.kt")
+    require("location_age_s" in recorder_source, "Recorder CSV must include location age")
+    require("elapsedRealtimeNanos" in recorder_source, "Recorder must calculate location age from monotonic time")
     simulator = services[".simulation.SimulatorService"]
     require(simulator.attrib[ANDROID + "exported"] == "false", "Simulator must not be exported")
     require(simulator.attrib[ANDROID + "foregroundServiceType"] == "specialUse", "Simulator service type changed")

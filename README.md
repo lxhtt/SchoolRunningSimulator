@@ -25,7 +25,7 @@ python3 scripts/check_project.py
 
 没有明确下载许可和网络预算时，不要运行 `./gradlew`（包括 `--offline`）：Wrapper 可能先下载 Gradle 发行包。
 
-目标仓库为 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，CI 目标分支为 `master`。最近一次包含 P2/P1 桥接的成功构建为 run [`36052244751`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/36052244751)；构建步骤和安装说明见 [`docs/BUILD.md`](docs/BUILD.md)。
+目标仓库为 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，CI 目标分支为 `master`。最近一次成功构建为 run [`36055213349`](https://github.com/lxhtt/SchoolRunningSimulator/actions/runs/36055213349)；构建步骤和安装说明见 [`docs/BUILD.md`](docs/BUILD.md)。
 
 ## 模型边界
 
