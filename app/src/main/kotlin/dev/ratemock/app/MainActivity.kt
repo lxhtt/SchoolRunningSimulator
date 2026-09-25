@@ -1,8 +1,11 @@
 package dev.ratemock.app
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -12,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -28,6 +32,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,9 +67,12 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
                     Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                        TabRow(selectedTabIndex = selectedTab) {
-                            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(stringResource(R.string.sim_tab)) })
-                            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(stringResource(R.string.record_tab)) })
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TabRow(selectedTabIndex = selectedTab, modifier = Modifier.weight(1f)) {
+                                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(stringResource(R.string.sim_tab)) })
+                                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(stringResource(R.string.record_tab)) })
+                            }
+                            TextButton(onClick = { openBatterySettings() }) { Text(stringResource(R.string.battery_settings)) }
                         }
                         Box(modifier = Modifier.weight(1f)) {
                             if (selectedTab == 0) {
@@ -99,6 +107,28 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        val guidance = getSharedPreferences(BATTERY_PREFS, MODE_PRIVATE)
+        if (!guidance.getBoolean(KEY_BATTERY_GUIDANCE_SHOWN, false)) {
+            guidance.edit().putBoolean(KEY_BATTERY_GUIDANCE_SHOWN, true).apply()
+            openBatterySettings()
+        }
+    }
+
+    private fun openBatterySettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", packageName, null)
+            })
+        } catch (_: ActivityNotFoundException) {
+            // Some devices do not provide an app-details settings activity.
+        } catch (_: SecurityException) {
+            // Keep the app usable when a ROM blocks this settings activity.
+        }
+    }
+
+    private companion object {
+        const val BATTERY_PREFS = "battery_guidance"
+        const val KEY_BATTERY_GUIDANCE_SHOWN = "shown"
     }
 
     private fun startSimulation(speed: Double, duration: Double, cadence: Double?, fatigue: Double): Boolean = runCatching {

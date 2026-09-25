@@ -30,6 +30,8 @@
     <string name="recorder_no_logs">暂无记录。点击“开始记录”后等待 GPS 样本。</string>
     <string name="recorder_no_file">尚未创建</string>
     <string name="recorder_no_data">暂无 GPS 数据</string>
+    <string name="battery_settings">电池设置</string>
+    <string name="battery_guidance">在系统设置的电池选项选择“无限制”；返回应用不会自动确认该设置。设备仍可能限制息屏运行。</string>
     <string name="sim_tab">模拟</string>
     <string name="record_tab">记录</string>
     <string name="sim_title">模拟跑台</string>
