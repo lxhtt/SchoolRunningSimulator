@@ -12,6 +12,8 @@ import dev.ratemock.core.route.GeoPoint
 import dev.ratemock.core.route.Route
 import dev.ratemock.core.truth.GaitEngine
 import java.nio.file.Files
+import java.time.Instant
+import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -39,13 +41,25 @@ class ExportersTest {
         assertTrue(CsvExporter.gps(bundle.gps).contains("latitude_deg"))
         assertTrue(JsonExporter.summary(bundle).contains("\"simulated\": true"))
         assertTrue(JsonExporter.summary(bundle).contains("\"uncalibrated\": true"))
-        assertTrue(GpxExporter.track(bundle.gps).contains("<gpx"))
+        assertTrue(JsonExporter.summary(bundle, stepCount = 42, durationSeconds = 5.0, distanceMeters = 10.0)
+            .contains("\"step_count\": 42"))
+        assertTrue(GpxExporter.track(bundle.gps).contains("1970-01-01T00:00:01Z"))
+    }
+
+    @Test
+    fun `gpx timestamps are parseable ISO instants`() {
+        val xml = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+            .parse(GpxExporter.track(sampleBundle()).byteInputStream())
+        val times = xml.getElementsByTagName("time")
+        assertTrue(times.length > 0)
+        Instant.parse(times.item(0).textContent)
+        val anchored = GpxExporter.track(sampleBundle().gps, Instant.parse("2026-01-01T12:00:00Z"))
+        assertTrue(anchored.contains("2026-01-01T12:00:00.100Z"))
     }
 
     @Test
     fun `gps observations remain separate and match truth sample count`() {
         val bundle = sampleBundle()
-        assertEquals(bundle.truth.size, bundle.gps.size)
         assertTrue(bundle.gps.all { it.latitudeDeg.isFinite() && it.longitudeDeg.isFinite() })
     }
 

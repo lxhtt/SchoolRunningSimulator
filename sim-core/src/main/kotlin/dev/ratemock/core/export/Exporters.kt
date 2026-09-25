@@ -10,7 +10,9 @@ import dev.ratemock.core.truth.StepEvent
 import dev.ratemock.core.truth.TruthSample
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 import kotlin.math.hypot
+import kotlin.math.roundToLong
 
 /** GPS observation fields are deliberately separate from truth-layer samples. */
 data class GpsObservation(
@@ -106,28 +108,33 @@ object CsvExporter {
 }
 
 object JsonExporter {
-    fun summary(bundle: ExportBundle): String = buildString {
-        val last = bundle.truth.lastOrNull()
+    fun summary(
+        bundle: ExportBundle,
+        stepCount: Long = bundle.steps.size.toLong(),
+        durationSeconds: Double = bundle.truth.lastOrNull()?.timeSeconds ?: 0.0,
+        distanceMeters: Double = bundle.truth.lastOrNull()?.distanceMeters ?: 0.0,
+    ): String = buildString {
         appendLine("{")
         appendLine("  \"schema_version\": 1,")
         appendLine("  \"simulated\": ${bundle.simulated},")
         appendLine("  \"uncalibrated\": ${bundle.uncalibrated},")
         appendLine("  \"sample_count\": ${bundle.truth.size},")
-        appendLine("  \"step_count\": ${bundle.steps.size},")
+        appendLine("  \"step_count\": $stepCount,")
         appendLine("  \"gps_count\": ${bundle.gps.size},")
-        appendLine("  \"duration_s\": ${last?.timeSeconds ?: 0.0},")
-        appendLine("  \"distance_m\": ${last?.distanceMeters ?: 0.0}")
+        appendLine("  \"duration_s\": $durationSeconds,")
+        appendLine("  \"distance_m\": $distanceMeters")
         appendLine("}")
     }
 }
 
 object GpxExporter {
-    fun track(observations: List<GpsObservation>): String = buildString {
+    fun track(observations: List<GpsObservation>, startedAt: Instant = Instant.EPOCH): String = buildString {
         appendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
         appendLine("<gpx version=\"1.1\" creator=\"RateMock\" xmlns=\"http://www.topografix.com/GPX/1/1\">")
-        appendLine("  <trk><name>RateMock simulated track</name><trkseg>")
+        appendLine("  <trk><name>RateMock simulated track</name><desc>Synthetic, uncalibrated; not measured GPS</desc><trkseg>")
         observations.forEach { o ->
-            appendLine("    <trkpt lat=\"${o.latitudeDeg}\" lon=\"${o.longitudeDeg}\"><ele>${o.altitudeM}</ele><time>${o.timeSeconds}</time></trkpt>")
+            val timestamp = startedAt.plusMillis((o.timeSeconds * 1_000).roundToLong())
+            appendLine("    <trkpt lat=\"${o.latitudeDeg}\" lon=\"${o.longitudeDeg}\"><ele>${o.altitudeM}</ele><time>$timestamp</time></trkpt>")
         }
         appendLine("  </trkseg></trk>")
         appendLine("</gpx>")

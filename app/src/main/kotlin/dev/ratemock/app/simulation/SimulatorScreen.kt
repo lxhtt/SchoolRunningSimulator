@@ -4,6 +4,9 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.height
@@ -17,6 +20,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -39,10 +44,22 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import dev.ratemock.app.R
+import dev.ratemock.core.export.CsvExporter
+import dev.ratemock.core.export.ExportBundle
+import dev.ratemock.core.export.GpsObservationBuilder
+import dev.ratemock.core.export.GpxExporter
+import dev.ratemock.core.export.JsonExporter
+import dev.ratemock.core.route.GeoPoint
+import dev.ratemock.core.route.Route
+import dev.ratemock.core.truth.TruthSample
+import dev.ratemock.core.truth.RunState
 import dev.ratemock.core.truth.InteractiveSimulation
 import dev.ratemock.core.truth.SimulatorGait
 import dev.ratemock.core.truth.SimulationStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import java.time.Instant
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -51,6 +68,7 @@ import kotlin.math.roundToInt
 
 private data class HistoryPoint(
     val elapsedSeconds: Float,
+    val distanceM: Float,
     val speedMps: Float,
     val cadenceSpm: Float,
     val eastM: Float,
@@ -89,6 +107,25 @@ fun SimulatorScreen(
     var lastObservedTarget by remember { mutableFloatStateOf(Float.NaN) }
     var snapshot by remember { mutableStateOf(readSnapshot(context)) }
     var history by remember { mutableStateOf(emptyList<HistoryPoint>()) }
+    val exportScope = rememberCoroutineScope()
+    var exportMenu by remember { mutableStateOf(false) }
+    var exportFailed by remember { mutableStateOf(false) }
+    var exportSnapshot by remember { mutableStateOf<SimulatorUiSnapshot?>(null) }
+    val exportCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        val selected = exportSnapshot
+        if (uri != null && selected != null) exportScope.launch { exportFailed = !exportHistory(context, uri, selected, "csv") }
+        exportSnapshot = null
+    }
+    val exportJson = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val selected = exportSnapshot
+        if (uri != null && selected != null) exportScope.launch { exportFailed = !exportHistory(context, uri, selected, "json") }
+        exportSnapshot = null
+    }
+    val exportGpx = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri ->
+        val selected = exportSnapshot
+        if (uri != null && selected != null) exportScope.launch { exportFailed = !exportHistory(context, uri, selected, "gpx") }
+        exportSnapshot = null
+    }
     var startingAt by remember { mutableStateOf(0L) }
     var launchFailed by remember { mutableStateOf(false) }
     var notificationAllowed by remember { mutableStateOf(hasNotificationPermission(context)) }
@@ -176,6 +213,27 @@ fun SimulatorScreen(
             }
             if (history.isNotEmpty()) {
                 SimulationHistory(history)
+                if (!active) {
+                    androidx.compose.foundation.layout.Box {
+                        OutlinedButton(onClick = { exportMenu = true }) { Text(stringResource(R.string.sim_export)) }
+                        DropdownMenu(expanded = exportMenu, onDismissRequest = { exportMenu = false }) {
+                            listOf("csv", "json", "gpx").forEach { format ->
+                                DropdownMenuItem(text = { Text(format.uppercase()) }, onClick = {
+                                    exportMenu = false
+                                    exportSnapshot = snapshot
+                                    exportFailed = false
+                                    val fileName = snapshot.historyFile.removeSuffix(".csv") + ".$format"
+                                    when (format) {
+                                        "csv" -> exportCsv.launch(fileName)
+                                        "json" -> exportJson.launch(fileName)
+                                        else -> exportGpx.launch(fileName)
+                                    }
+                                })
+                            }
+                        }
+                    }
+                }
+                if (exportFailed) Text(stringResource(R.string.sim_export_error), color = MaterialTheme.colorScheme.error)
             }
         }
         if (active) {
@@ -344,6 +402,34 @@ private fun Metric(label: String, value: String, modifier: Modifier = Modifier) 
     }
 }
 
+private suspend fun exportHistory(context: Context, uri: Uri, snapshot: SimulatorUiSnapshot, format: String): Boolean =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val history = readSimulationHistory(context, snapshot.historyFile)
+            require(history.isNotEmpty())
+            val samples = history.map { point ->
+                val speed = point.speedMps.toDouble()
+                val cadence = point.cadenceSpm.toDouble()
+                TruthSample(point.elapsedSeconds.toDouble(), point.distanceM.toDouble(), point.eastM.toDouble(),
+                    point.northM.toDouble(), speed, cadence, if (cadence > 0.0) speed * 60.0 / cadence else 0.0, RunState.RUNNING)
+            }
+            val syntheticRoute = Route(listOf(GeoPoint(0.0, 0.0), GeoPoint(0.0, 0.1)))
+            val gps = GpsObservationBuilder(syntheticRoute).build(samples)
+            val bundle = ExportBundle(samples, emptyList(), gps)
+            val data = when (format) {
+                "csv" -> "# provenance=simulation;calibration=uncalibrated\n" + CsvExporter.truth(samples)
+                "json" -> JsonExporter.summary(bundle, snapshot.steps, snapshot.elapsedSeconds.toDouble(), snapshot.distanceMeters.toDouble())
+                "gpx" -> {
+                    val epochMs = snapshot.historyFile.removePrefix("simulation-").removeSuffix(".csv").toLong()
+                    GpxExporter.track(gps, Instant.ofEpochMilli(epochMs))
+                }
+                else -> error("Unsupported export format")
+            }
+            context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(data) }
+                ?: error("Unable to open selected document")
+        }.isSuccess
+    }
+
 private fun readSimulationHistory(context: Context, fileName: String): List<HistoryPoint> {
     if (!fileName.matches(Regex("simulation-[0-9]+\\.csv"))) return emptyList()
     val file = File(context.filesDir, "simulations/$fileName")
@@ -352,7 +438,7 @@ private fun readSimulationHistory(context: Context, fileName: String): List<Hist
         file.useLines { lines ->
             lines.drop(2).mapNotNull { line ->
                 val c = line.split(',')
-                if (c.size < 6) null else HistoryPoint(c[0].toFloat(), c[2].toFloat(), c[3].toFloat(), c[4].toFloat(), c[5].toFloat())
+                if (c.size < 6) null else HistoryPoint(c[0].toFloat(), c[1].toFloat(), c[2].toFloat(), c[3].toFloat(), c[4].toFloat(), c[5].toFloat())
             }.toList()
         }
     }.getOrDefault(emptyList())
@@ -366,7 +452,7 @@ private fun readSnapshot(context: Context): SimulatorUiSnapshot {
     val preferences = context.getSharedPreferences(SimulatorService.PREFS, Context.MODE_PRIVATE)
     val rawStatus = preferences.getString(SimulatorService.KEY_STATUS, "IDLE") ?: "IDLE"
     val heartbeat = preferences.getLong(SimulatorService.KEY_HEARTBEAT_MS, 0L)
-    val status = if (rawStatus == SimulationStatus.RUNNING.name &&
+    val status = if (rawStatus in setOf(SimulationStatus.RUNNING.name, SimulationStatus.PAUSED.name) &&
         (heartbeat == 0L || System.currentTimeMillis() - heartbeat > 5_000L)) {
         SimulatorService.STATUS_INTERRUPTED
     } else rawStatus
