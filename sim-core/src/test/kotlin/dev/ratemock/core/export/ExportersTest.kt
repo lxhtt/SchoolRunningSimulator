@@ -49,7 +49,7 @@ class ExportersTest {
     @Test
     fun `gpx timestamps are parseable ISO instants`() {
         val xml = DocumentBuilderFactory.newInstance().newDocumentBuilder()
-            .parse(GpxExporter.track(sampleBundle()).byteInputStream())
+            .parse(GpxExporter.track(sampleBundle().gps).byteInputStream())
         val times = xml.getElementsByTagName("time")
         assertTrue(times.length > 0)
         Instant.parse(times.item(0).textContent)
