@@ -55,7 +55,7 @@ object LocalReplayValidator {
                 havePosition = true
             }
             if (event is LocalStepCounterEvent) {
-                if (previousCounter != null && event.totalSteps < previousCounter!!) {
+                if (previousCounter != null && event.totalSteps < previousCounter) {
                     issues += ReplayIssue(ReplayIssueSeverity.INVALID, "COUNTER_RESET", event.sequence)
                 }
                 previousCounter = event.totalSteps

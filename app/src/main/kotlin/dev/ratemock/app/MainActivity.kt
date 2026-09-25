@@ -326,15 +326,16 @@ private fun RecorderPanel(context: Context) {
             Text(stringResource(R.string.recorder_file, snapshot.fileName))
             Text(stringResource(R.string.recorder_samples, snapshot.sampleCount))
             if (snapshot.active) {
+                val actualCadenceSpm = snapshot.actualCadenceSpm
                 Text(stringResource(R.string.real_target_cadence, snapshot.targetCadenceSpm.roundToInt()))
-                Text(snapshot.actualCadenceSpm?.let { stringResource(R.string.real_actual_cadence, it) }
+                Text(actualCadenceSpm?.let { stringResource(R.string.real_actual_cadence, it) }
                     ?: stringResource(if (snapshot.cadenceSource == "warming_up") R.string.real_cadence_warming else R.string.real_cadence_unavailable))
                 Text(stringResource(R.string.real_location_status, snapshot.locationQuality))
                 Text(stringResource(when {
-                    snapshot.actualCadenceSpm == null -> R.string.real_voice_waiting
+                    actualCadenceSpm == null -> R.string.real_voice_waiting
                     !snapshot.gpsFresh -> R.string.real_voice_gps_stale
-                    snapshot.actualCadenceSpm < snapshot.targetCadenceSpm - 5 -> R.string.real_voice_increase
-                    snapshot.actualCadenceSpm > snapshot.targetCadenceSpm + 5 -> R.string.real_voice_decrease
+                    actualCadenceSpm < snapshot.targetCadenceSpm - 5 -> R.string.real_voice_increase
+                    actualCadenceSpm > snapshot.targetCadenceSpm + 5 -> R.string.real_voice_decrease
                     else -> R.string.real_voice_hold
                 }, snapshot.targetCadenceSpm.roundToInt()))
                 Text(stringResource(R.string.real_counter_status, when (snapshot.counterQuality) {
