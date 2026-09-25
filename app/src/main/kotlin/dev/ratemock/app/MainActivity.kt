@@ -74,6 +74,12 @@ class MainActivity : ComponentActivity() {
                             }
                             TextButton(onClick = { openBatterySettings() }) { Text(stringResource(R.string.battery_settings)) }
                         }
+                        Text(
+                            stringResource(R.string.battery_guidance),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         Box(modifier = Modifier.weight(1f)) {
                             if (selectedTab == 0) {
                                 SimulatorScreen(

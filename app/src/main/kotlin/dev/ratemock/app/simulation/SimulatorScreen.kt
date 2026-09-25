@@ -72,6 +72,7 @@ fun SimulatorScreen(
     var manualMode by rememberSaveable { mutableStateOf(false) }
     var manualCadence by rememberSaveable { mutableFloatStateOf(160f) }
     var fatigueReduction by rememberSaveable { mutableFloatStateOf(0f) }
+    var lastObservedTarget by remember { mutableFloatStateOf(Float.NaN) }
     var snapshot by remember { mutableStateOf(readSnapshot(context)) }
     var startingAt by remember { mutableStateOf(0L) }
     var launchFailed by remember { mutableStateOf(false) }
@@ -81,8 +82,9 @@ fun SimulatorScreen(
             snapshot = withContext(Dispatchers.IO) { readSnapshot(context) }
             notificationAllowed = hasNotificationPermission(context)
             if (snapshot.status == SimulationStatus.RUNNING.name || snapshot.status == SimulationStatus.PAUSED.name) {
-                if (snapshot.status != SimulationStatus.RUNNING.name && snapshot.status != SimulationStatus.PAUSED.name) {
+                if (snapshot.targetSpeedMps != lastObservedTarget) {
                     targetSpeed = snapshot.targetSpeedMps
+                    lastObservedTarget = snapshot.targetSpeedMps
                 }
                 durationMinutes = snapshot.durationSeconds / 60f
                 if (snapshot.manualCadenceSpm > 0f) {
@@ -103,6 +105,13 @@ fun SimulatorScreen(
         snapshot.mode
     } else if (targetSpeed < InteractiveSimulation.MODE_BOUNDARY_MPS) "WALKING" else "RUNNING"
     val modeLabel = if (mode == "WALKING") R.string.sim_mode_walking else R.string.sim_mode_running
+    val cadenceLabel = if (if (active || snapshot.status != "IDLE") snapshot.manualCadenceSpm > 0f else manualMode) {
+        R.string.sim_mode_manual
+    } else R.string.sim_mode_auto
+    val validProfile = runCatching {
+        SimulatorGait.validateProfile(targetSpeed.toDouble(), if (active) snapshot.manualCadenceSpm.takeIf { it > 0f }?.toDouble()
+            else if (manualMode) manualCadence.toDouble() else null, fatigueReduction.toDouble())
+    }.isSuccess
     val statusLabel = when (snapshot.status) {
         SimulationStatus.RUNNING.name -> R.string.sim_status_running
         SimulationStatus.PAUSED.name -> R.string.sim_status_paused
@@ -112,10 +121,11 @@ fun SimulatorScreen(
         SimulatorService.STATUS_ERROR -> R.string.sim_status_error
         else -> R.string.sim_status_idle
     }
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
         Text(stringResource(R.string.sim_title), modifier = Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineMedium)
         Text(stringResource(R.string.sim_model_note), color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium)
@@ -125,7 +135,7 @@ fun SimulatorScreen(
                     Text(stringResource(statusLabel), color = if (snapshot.status == SimulationStatus.RUNNING.name)
                         MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.titleMedium)
-                    Text(stringResource(modeLabel), style = MaterialTheme.typography.labelLarge)
+                    Text("${stringResource(modeLabel)} · ${stringResource(cadenceLabel)}", style = MaterialTheme.typography.labelLarge)
                     if (active) {
                         Text(stringResource(R.string.sim_speed_value, snapshot.targetSpeedMps),
                             style = MaterialTheme.typography.bodyMedium)
@@ -159,9 +169,10 @@ fun SimulatorScreen(
                     activeTrackColor = MaterialTheme.colorScheme.primary,
                     inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
                 ))
-            OutlinedButton(onClick = { onSetSpeed(targetSpeed.toDouble()) }, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { onSetSpeed(targetSpeed.toDouble()) }, enabled = validProfile, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.sim_apply_speed))
             }
+            if (!validProfile) Text(stringResource(R.string.sim_infeasible_note), color = MaterialTheme.colorScheme.error)
         }
         if (!active) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -195,6 +206,7 @@ fun SimulatorScreen(
                             inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
                         ))
                     Text(stringResource(R.string.sim_step_length_value, targetSpeed * 60f / manualCadence), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (!validProfile) Text(stringResource(R.string.sim_invalid_profile_note), color = MaterialTheme.colorScheme.error)
                 }
                 Text(stringResource(R.string.sim_fatigue_reduction), style = MaterialTheme.typography.titleSmall)
                 Text(stringResource(R.string.sim_percent_value, (fatigueReduction * 100).roundToInt()), style = MaterialTheme.typography.titleLarge)
@@ -217,34 +229,36 @@ fun SimulatorScreen(
                 Text(stringResource(R.string.sim_permission))
             }
         }
-        if (active) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = {
-                    onCommand(if (snapshot.status == SimulationStatus.PAUSED.name) SimulatorService.ACTION_RESUME else SimulatorService.ACTION_PAUSE)
-                }, modifier = Modifier.weight(1f)) {
-                    Text(stringResource(if (snapshot.status == SimulationStatus.PAUSED.name) R.string.sim_resume else R.string.sim_pause))
-                }
-                OutlinedButton(onClick = { onCommand(SimulatorService.ACTION_STOP) }, modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.sim_stop))
-                }
-            }
-        } else {
-            Button(onClick = {
-                launchFailed = !onStart(targetSpeed.toDouble(), durationMinutes.roundToInt() * 60.0,
-                    if (manualMode) manualCadence.toDouble() else null, fatigueReduction.toDouble())
-                if (!launchFailed) startingAt = System.currentTimeMillis()
-            }, enabled = notificationAllowed && startingAt == 0L, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(if (startingAt != 0L) R.string.sim_starting else R.string.sim_start))
-            }
-        }
-        if (launchFailed || snapshot.status == SimulatorService.STATUS_ERROR) {
-            Text(stringResource(R.string.sim_error_note), color = MaterialTheme.colorScheme.error)
-        }
         if (snapshot.error == SimulatorService.ERROR_INFEASIBLE) {
             Text(stringResource(R.string.sim_infeasible_note), color = MaterialTheme.colorScheme.error)
         }
         if (snapshot.status == SimulatorService.STATUS_INTERRUPTED) {
             Text(stringResource(R.string.sim_interrupted_note), color = MaterialTheme.colorScheme.error)
+        }
+        }
+        Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+                if (active) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedButton(onClick = {
+                            onCommand(if (snapshot.status == SimulationStatus.PAUSED.name) SimulatorService.ACTION_RESUME else SimulatorService.ACTION_PAUSE)
+                        }, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(if (snapshot.status == SimulationStatus.PAUSED.name) R.string.sim_resume else R.string.sim_pause))
+                        }
+                        OutlinedButton(onClick = { onCommand(SimulatorService.ACTION_STOP) }, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.sim_stop))
+                        }
+                    }
+                } else {
+                    Button(onClick = {
+                        launchFailed = !onStart(targetSpeed.toDouble(), durationMinutes.roundToInt() * 60.0,
+                            if (manualMode) manualCadence.toDouble() else null, fatigueReduction.toDouble())
+                        if (!launchFailed) startingAt = System.currentTimeMillis()
+                    }, enabled = notificationAllowed && validProfile && startingAt == 0L, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(if (startingAt != 0L) R.string.sim_starting else R.string.sim_start))
+                    }
+                }
+            }
         }
     }
 }
