@@ -11,6 +11,11 @@
     <string name="speed_formula">v = 步频 × 单步长度 ÷ 60</string>
     <string name="next_phase">下一阶段：继续完善仿真数据与校准工具。</string>
     <string name="privacy_note">记录器写入应用私有目录；停止后可通过 adb 或应用文件管理方式取出 CSV。不会修改系统定位，也不执行定位注入。</string>
+    <string name="real_target_cadence">目标步频：%1$d 步/分</string>
+    <string name="real_actual_cadence">当前步频：%1$.0f 步/分（逐步传感器）</string>
+    <string name="real_cadence_warming">当前步频：等待更多逐步事件</string>
+    <string name="real_cadence_unavailable">当前步频：传感器不可用</string>
+    <string name="real_location_status">GPS：%1$s</string>
     <string name="recorder_title">实跑记录器 · S7</string>
     <string name="recorder_description">前台服务可在息屏时记录 GPS 和累计步数。首次使用请授予定位、活动识别和通知权限。</string>
     <string name="recorder_permissions">申请记录权限</string>

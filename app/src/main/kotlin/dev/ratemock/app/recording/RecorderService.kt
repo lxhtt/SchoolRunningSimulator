@@ -20,7 +20,9 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.os.SystemClock
 import dev.ratemock.app.R
+import dev.ratemock.core.truth.CadenceEstimator
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -35,6 +37,8 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     private var latestLocation: Location? = null
     private var recordingFile: File? = null
     private var recordingStartedAtMs: Long = 0L
+    private var targetCadenceSpm = 170.0
+    private val cadenceEstimator = CadenceEstimator()
     private val heartbeatHandler = Handler(Looper.getMainLooper())
     private val callbackThread = HandlerThread("RecorderCallbacks")
     private lateinit var callbackHandler: Handler
@@ -70,13 +74,24 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action == ACTION_START) startRecording()
+        if (intent?.action == ACTION_START) startRecording(intent)
         return START_STICKY
     }
 
-    private fun startRecording() {
+    private fun startRecording(intent: Intent? = null) {
         if (writer != null) return
         if (!hasLocationPermission()) return
+        targetCadenceSpm = intent?.getDoubleExtra(EXTRA_TARGET_CADENCE_SPM, 170.0)?.takeIf { it.isFinite() } ?: 170.0
+        cadenceEstimator.reset()
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putFloat(KEY_TARGET_CADENCE_SPM, targetCadenceSpm.toFloat())
+            .putFloat(KEY_CADENCE_SPM, 0f)
+            .putBoolean(KEY_CADENCE_AVAILABLE, false)
+            .putLong(KEY_LAST_STEP_NS, 0L)
+            .putLong(KEY_LOCATION_FIX_NS, 0L)
+            .putString(KEY_CADENCE_SOURCE, "unavailable")
+            .putString(KEY_LOCATION_QUALITY, "waiting")
+            .apply()
         val notification = notification("Recording GPS and step counter")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
@@ -99,6 +114,13 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         val stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         if (stepSensor != null && hasActivityPermission()) {
             sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_NORMAL, callbackHandler)
+        }
+        val detector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putString(KEY_CADENCE_SOURCE, if (detector == null || !hasActivityPermission()) "unavailable" else "warming_up")
+            .apply()
+        if (detector != null && hasActivityPermission()) {
+            sensorManager.registerListener(this, detector, SensorManager.SENSOR_DELAY_NORMAL, callbackHandler)
         }
         try {
             locationManager.requestLocationUpdates(
@@ -124,6 +146,7 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         }
         latestStepCounter = null
         latestLocation = null
+        cadenceEstimator.reset()
         recordingFile = null
         recordingStartedAtMs = 0L
         heartbeatHandler.removeCallbacks(heartbeat)
@@ -136,6 +159,10 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
 
     override fun onLocationChanged(location: Location) {
         latestLocation = Location(location)
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putLong(KEY_LOCATION_FIX_NS, location.elapsedRealtimeNanos)
+            .putString(KEY_LOCATION_QUALITY, if (location.hasAccuracy() && location.accuracy <= 25f) "fresh" else "low_accuracy")
+            .apply()
     }
 
     private fun writeSample() {
@@ -162,7 +189,17 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type == Sensor.TYPE_STEP_COUNTER) latestStepCounter = event.values.firstOrNull()
+        if (event.sensor.type == Sensor.TYPE_STEP_COUNTER) {
+            latestStepCounter = event.values.firstOrNull()
+        } else if (event.sensor.type == Sensor.TYPE_STEP_DETECTOR) {
+            val cadence = cadenceEstimator.addStep(event.timestamp / 1_000_000_000.0)
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putLong(KEY_LAST_STEP_NS, event.timestamp)
+                .putFloat(KEY_CADENCE_SPM, cadence?.toFloat() ?: 0f)
+                .putBoolean(KEY_CADENCE_AVAILABLE, cadence != null && cadence.isFinite())
+                .putString(KEY_CADENCE_SOURCE, if (cadence != null) "step_detector" else "warming_up")
+                .apply()
+        }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
@@ -205,6 +242,14 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         private const val PREFS = "recorder_status"
         const val KEY_ACTIVE = "active"
         const val KEY_HEARTBEAT_MS = "heartbeat_ms"
+        const val EXTRA_TARGET_CADENCE_SPM = "target_cadence_spm"
+        const val KEY_TARGET_CADENCE_SPM = "target_cadence_spm"
+        const val KEY_CADENCE_SPM = "cadence_spm"
+        const val KEY_CADENCE_AVAILABLE = "cadence_available"
+        const val KEY_CADENCE_SOURCE = "cadence_source"
+        const val KEY_LAST_STEP_NS = "last_step_ns"
+        const val KEY_LOCATION_FIX_NS = "location_fix_ns"
+        const val KEY_LOCATION_QUALITY = "location_quality"
         private const val CHANNEL_ID = "ratemock-recording"
         private const val NOTIFICATION_ID = 1001
         private const val LOCATION_INTERVAL_MS = 1_000L

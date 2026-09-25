@@ -8,6 +8,7 @@ import android.net.Uri
 import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,6 +29,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -37,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -57,6 +60,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,8 +103,10 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 RecorderScreen(
                                     onRequestPermissions = { requestRecordingPermissions() },
-                                    onStartRecording = {
-                                        val intent = Intent(this@MainActivity, RecorderService::class.java).setAction(RecorderService.ACTION_START)
+                                    onStartRecording = { cadence ->
+                                        val intent = Intent(this@MainActivity, RecorderService::class.java)
+                                            .setAction(RecorderService.ACTION_START)
+                                            .putExtra(RecorderService.EXTRA_TARGET_CADENCE_SPM, cadence)
                                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
                                     },
                                     onStopRecording = {
@@ -176,10 +182,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun RecorderScreen(
     onRequestPermissions: () -> Unit,
-    onStartRecording: () -> Unit,
+    onStartRecording: (Double) -> Unit,
     onStopRecording: () -> Unit,
 ) {
     val context = LocalContext.current
+    var targetCadence by rememberSaveable { mutableFloatStateOf(170f) }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -207,7 +214,9 @@ private fun RecorderScreen(
                         Button(onClick = onRequestPermissions, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.recorder_permissions))
                         }
-                        Button(onClick = onStartRecording, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.real_target_cadence, targetCadence.roundToInt()))
+                        Slider(value = targetCadence, onValueChange = { targetCadence = (it / 5f).roundToInt() * 5f }, valueRange = 90f..210f)
+                        Button(onClick = { onStartRecording(targetCadence.toDouble()) }, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.recorder_start))
                         }
                         OutlinedButton(onClick = onStopRecording, modifier = Modifier.fillMaxWidth()) {
@@ -231,6 +240,10 @@ private data class RecorderUiSnapshot(
     val fileName: String,
     val sampleCount: Int,
     val heartbeatAgeMs: Long?,
+    val targetCadenceSpm: Float,
+    val actualCadenceSpm: Float?,
+    val cadenceSource: String,
+    val locationQuality: String,
     val summary: String,
     val latest: String,
     val logs: List<String>,
@@ -256,6 +269,12 @@ private fun RecorderPanel(context: Context) {
             )
             Text(stringResource(R.string.recorder_file, snapshot.fileName))
             Text(stringResource(R.string.recorder_samples, snapshot.sampleCount))
+            if (snapshot.active) {
+                Text(stringResource(R.string.real_target_cadence, snapshot.targetCadenceSpm.roundToInt()))
+                Text(snapshot.actualCadenceSpm?.let { stringResource(R.string.real_actual_cadence, it) }
+                    ?: stringResource(if (snapshot.cadenceSource == "warming_up") R.string.real_cadence_warming else R.string.real_cadence_unavailable))
+                Text(stringResource(R.string.real_location_status, snapshot.locationQuality))
+            }
             Text(
                 snapshot.heartbeatAgeMs?.let { age -> stringResource(R.string.recorder_heartbeat, age / 1_000L) }
                     ?: stringResource(R.string.recorder_no_heartbeat),
@@ -283,6 +302,9 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
     val heartbeat = preferences.getLong(RecorderService.KEY_HEARTBEAT_MS, 0L)
     val active = preferences.getBoolean(RecorderService.KEY_ACTIVE, false) &&
         System.currentTimeMillis() - heartbeat < 3_000L
+    val lastStepNs = preferences.getLong(RecorderService.KEY_LAST_STEP_NS, 0L)
+    val lastFixNs = preferences.getLong(RecorderService.KEY_LOCATION_FIX_NS, 0L)
+    val nowNs = SystemClock.elapsedRealtimeNanos()
     var sampleCount = 0
     var firstElapsed = 0.0
     var lastElapsed = 0.0
@@ -313,6 +335,13 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
         fileName = file?.name ?: context.getString(R.string.recorder_no_file),
         sampleCount = sampleCount,
         heartbeatAgeMs = if (heartbeat == 0L) null else (System.currentTimeMillis() - heartbeat).coerceAtLeast(0L),
+        targetCadenceSpm = preferences.getFloat(RecorderService.KEY_TARGET_CADENCE_SPM, 170f),
+        actualCadenceSpm = preferences.getFloat(RecorderService.KEY_CADENCE_SPM, 0f)
+            .takeIf { active && preferences.getBoolean(RecorderService.KEY_CADENCE_AVAILABLE, false) &&
+                lastStepNs > 0L && nowNs - lastStepNs in 0L..3_000_000_000L },
+        cadenceSource = preferences.getString(RecorderService.KEY_CADENCE_SOURCE, "unavailable") ?: "unavailable",
+        locationQuality = if (lastFixNs == 0L) "等待 GPS" else if (nowNs - lastFixNs !in 0L..5_000_000_000L) "定位已过期"
+            else if (preferences.getString(RecorderService.KEY_LOCATION_QUALITY, "waiting") == "fresh") "定位新鲜" else "精度较低",
         summary = if (sampleCount == 0) {
             context.getString(R.string.recorder_no_summary)
         } else {
