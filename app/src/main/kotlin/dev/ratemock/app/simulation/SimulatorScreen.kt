@@ -56,6 +56,9 @@ import dev.ratemock.core.truth.RunState
 import dev.ratemock.core.truth.InteractiveSimulation
 import dev.ratemock.core.truth.SimulatorGait
 import dev.ratemock.core.truth.SimulationStatus
+import dev.ratemock.core.replay.LocalPositionEvent
+import dev.ratemock.core.replay.LocalReplayValidator
+import dev.ratemock.core.replay.ReplayIssueSeverity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
@@ -73,6 +76,13 @@ private data class HistoryPoint(
     val cadenceSpm: Float,
     val eastM: Float,
     val northM: Float,
+)
+
+private data class ReplayDiagnostic(
+    val status: String,
+    val events: Int,
+    val durationSeconds: Float,
+    val warnings: Int,
 )
 
 private data class SimulatorUiSnapshot(
@@ -107,6 +117,7 @@ fun SimulatorScreen(
     var lastObservedTarget by remember { mutableFloatStateOf(Float.NaN) }
     var snapshot by remember { mutableStateOf(readSnapshot(context)) }
     var history by remember { mutableStateOf(emptyList<HistoryPoint>()) }
+    val replayDiagnostic = remember(history) { diagnoseHistory(history) }
     val exportScope = rememberCoroutineScope()
     var exportMenu by remember { mutableStateOf(false) }
     var exportFailed by remember { mutableStateOf(false) }
@@ -213,6 +224,7 @@ fun SimulatorScreen(
             }
             if (history.isNotEmpty()) {
                 SimulationHistory(history)
+                ReplayDiagnosticCard(replayDiagnostic)
                 if (!active) {
                     androidx.compose.foundation.layout.Box {
                         OutlinedButton(onClick = { exportMenu = true }) { Text(stringResource(R.string.sim_export)) }
@@ -429,6 +441,28 @@ private suspend fun exportHistory(context: Context, uri: Uri, snapshot: Simulato
                 ?: error("Unable to open selected document")
         }.isSuccess
     }
+
+@Composable
+private fun ReplayDiagnosticCard(diagnostic: ReplayDiagnostic) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(stringResource(R.string.sim_replay_diagnostic_title), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.sim_replay_diagnostic_status, diagnostic.status))
+            Text(stringResource(R.string.sim_replay_diagnostic_summary, diagnostic.events, diagnostic.durationSeconds, diagnostic.warnings))
+            Text(stringResource(R.string.sim_replay_diagnostic_note), color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+private fun diagnoseHistory(history: List<HistoryPoint>): ReplayDiagnostic {
+    val events = history.mapIndexed { index, point ->
+        LocalPositionEvent("simulation-history", index.toLong(), point.elapsedSeconds.toDouble(), point.eastM.toDouble(), point.northM.toDouble())
+    }
+    val validation = LocalReplayValidator.validate(events)
+    return ReplayDiagnostic(validation.status.name, validation.eventCount, validation.durationSeconds.toFloat(),
+        validation.issues.count { it.severity == ReplayIssueSeverity.WARNING })
+}
 
 private fun readSimulationHistory(context: Context, fileName: String): List<HistoryPoint> {
     if (!fileName.matches(Regex("simulation-[0-9]+\\.csv"))) return emptyList()

@@ -40,6 +40,7 @@ def main() -> None:
         "docs/PROJECT_PLAN.md", "docs/BUILD.md", "docs/README.md",
         "docs/P0-IMPLEMENTATION.md", "docs/DESIGN-injection-fusion.md",
         "scripts/recording_to_calibration.py", "tests/test_recording_to_calibration.py",
+        "docs/superpowers/specs/2026-09-25-p5-safe-replay-design.md",
     ]
     for path in required:
         require((ROOT / path).is_file(), f"Missing file: {path}")
@@ -96,6 +97,14 @@ def main() -> None:
     require("google()" not in core_settings, "Core resolution must not require Google's Android repository")
     for path in (ROOT / "sim-core/src").rglob("*.kt"):
         require(not re.search(r"^import (android\.|androidx\.)", path.read_text(), re.M), f"Android import in {path}")
+
+    replay_sources = list((ROOT / "sim-core/src/main/kotlin/dev/ratemock/core/replay").glob("*.kt"))
+    require(replay_sources, "Missing P5 replay sources")
+    for path in replay_sources:
+        content = path.read_text()
+        require("package dev.ratemock.core.replay" in content, f"Wrong replay package: {path}")
+        require("android." not in content and "androidx." not in content, f"Android dependency in replay source: {path}")
+    require("addTestProvider" not in text("app/src/main/kotlin/dev/ratemock/app/simulation/SimulatorScreen.kt"), "Simulation UI must not inject locations")
 
     manifest = ET.fromstring(text("app/src/main/AndroidManifest.xml"))
     permissions = {element.attrib.get(ANDROID + "name") for element in manifest.findall("uses-permission")}
