@@ -20,7 +20,6 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
-import android.os.SystemClock
 import dev.ratemock.app.R
 import dev.ratemock.core.truth.CadenceEstimator
 import java.io.BufferedWriter
