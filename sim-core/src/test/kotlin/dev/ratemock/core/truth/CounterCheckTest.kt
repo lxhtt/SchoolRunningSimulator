@@ -1,7 +1,7 @@
 package dev.ratemock.core.truth
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class CounterCheckTest {
     @Test fun comparesAfterEnoughStepsAndFlagsDisagreement() {
