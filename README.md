@@ -9,7 +9,7 @@
 ## 当前功能
 
 - 纯 Kotlin/JVM 内核：可行域、运动计划、固定步长真值、GPS 观测、导出和校准；新增可暂停交互会话已在首轮 P2 CI 的 JDK 17/21 测试中通过。
-- Android 前台记录器：独立采集真实 GPS 与累计步数到应用私有 CSV，已在真机上验证连续采样。
+- Android 前台记录器：独立采集真实 GPS 与累计步数到应用私有 CSV，逐步传感器提供实时步频；可选语音提示，停止后由用户显式选择 CSV/JSON/GPX 导出目标。没有新鲜 GPS 时拒绝导出，不会用模拟路线补点。
 - S7→S6 离线桥接：`scripts/recording_to_calibration.py` 将 Android 原始 CSV 按稳定窗口转换为 S6 输入，并生成质量报告；个人原始数据与派生文件不进仓库。
 - P2 模拟跑台：选择目标速度与时长，自动使用独立的步行/跑步工程默认模型；实时显示距离、步数和步频，通过通知暂停、继续或停止；息屏/后台不主动暂停。支持私有历史曲线、合成路线、显式 CSV/JSON/GPX 导出及 provenance 校验诊断。
 - P5 安全回放基础：纯 JVM 本地位置/步数事件协议、时间/序号/计数器/路线校验、只读离线回放；Android 仅诊断私有模拟历史，不生成系统 Location/SensorEvent，不含 LSPosed/Xposed 或第三方兼容性承诺。规格见 [`docs/superpowers/specs/2026-09-25-p5-safe-replay-design.md`](docs/superpowers/specs/2026-09-25-p5-safe-replay-design.md)。

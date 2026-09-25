@@ -41,7 +41,12 @@ data class ExportBundle(
     val gps: List<GpsObservation>,
     val simulated: Boolean = true,
     val uncalibrated: Boolean = true,
-)
+    val provenance: String = if (simulated) "simulation" else "real_observation",
+) {
+    init {
+        require(provenance.isNotBlank())
+    }
+}
 
 /** Builds GPS observations from truth samples and optional local-coordinate noise. */
 class GpsObservationBuilder(
@@ -116,6 +121,7 @@ object JsonExporter {
     ): String = buildString {
         appendLine("{")
         appendLine("  \"schema_version\": 1,")
+        appendLine("  \"provenance\": \"${bundle.provenance}\",")
         appendLine("  \"simulated\": ${bundle.simulated},")
         appendLine("  \"uncalibrated\": ${bundle.uncalibrated},")
         appendLine("  \"sample_count\": ${bundle.truth.size},")
@@ -128,10 +134,11 @@ object JsonExporter {
 }
 
 object GpxExporter {
-    fun track(observations: List<GpsObservation>, startedAt: Instant = Instant.EPOCH): String = buildString {
+    fun track(observations: List<GpsObservation>, startedAt: Instant = Instant.EPOCH, simulatedTrack: Boolean = true): String = buildString {
         appendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
         appendLine("<gpx version=\"1.1\" creator=\"RateMock\" xmlns=\"http://www.topografix.com/GPX/1/1\">")
-        appendLine("  <trk><name>RateMock simulated track</name><desc>Synthetic, uncalibrated; not measured GPS</desc><trkseg>")
+        appendLine("  <trk><name>RateMock ${if (simulatedTrack) "simulated" else "real observation"} track</name><desc>${if (simulatedTrack) "Synthetic, uncalibrated; not measured GPS" else "Real GPS observation; freshness is retained in source CSV"}</desc><trkseg>")
+
         observations.forEach { o ->
             val timestamp = startedAt.plusMillis((o.timeSeconds * 1_000).roundToLong())
             appendLine("    <trkpt lat=\"${o.latitudeDeg}\" lon=\"${o.longitudeDeg}\"><ele>${o.altitudeM}</ele><time>$timestamp</time></trkpt>")

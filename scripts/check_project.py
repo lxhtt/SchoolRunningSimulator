@@ -41,6 +41,7 @@ def main() -> None:
         "docs/P0-IMPLEMENTATION.md", "docs/DESIGN-injection-fusion.md",
         "scripts/recording_to_calibration.py", "tests/test_recording_to_calibration.py",
         "docs/superpowers/specs/2026-09-25-p5-safe-replay-design.md",
+        "docs/superpowers/specs/2026-09-25-p3-run-assistance-design.md",
     ]
     for path in required:
         require((ROOT / path).is_file(), f"Missing file: {path}")
@@ -105,6 +106,23 @@ def main() -> None:
         require("package dev.ratemock.core.replay" in content, f"Wrong replay package: {path}")
         require("android." not in content and "androidx." not in content, f"Android dependency in replay source: {path}")
     require("addTestProvider" not in text("app/src/main/kotlin/dev/ratemock/app/simulation/SimulatorScreen.kt"), "Simulation UI must not inject locations")
+    real_export = text("sim-core/src/main/kotlin/dev/ratemock/core/export/RealRunExport.kt")
+    real_ui = text("app/src/main/kotlin/dev/ratemock/app/MainActivity.kt")
+    recorder_source = text("app/src/main/kotlin/dev/ratemock/app/recording/RecorderService.kt")
+    require('provenance=real_observation' in real_export and '"recordings"' in real_ui,
+            "Real-run provenance or private recording path missing")
+    require('"simulations"' not in real_export and 'loadStoppedRecording(context, fileName)' in real_ui,
+            "Real-run export must not read simulation history")
+    require('rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument' in real_ui,
+            "Real export must require an explicit document destination")
+    require("ACTION_STOP" in recorder_source and "PendingIntent.getService" in recorder_source,
+            "Recorder notification must expose a stop action")
+    require("RunPromptDecider" in recorder_source and "TYPE_STEP_DETECTOR" in recorder_source,
+            "Real prompt must derive cadence from detector events")
+    for path in (ROOT / "app/src/main/kotlin").rglob("*.kt"):
+        content = path.read_text()
+        for forbidden in ("addTestProvider(", "setTestProviderLocation(", "XposedBridge."):
+            require(forbidden not in content, f"Injection API forbidden in {path}")
 
     manifest = ET.fromstring(text("app/src/main/AndroidManifest.xml"))
     permissions = {element.attrib.get(ANDROID + "name") for element in manifest.findall("uses-permission")}
@@ -126,7 +144,6 @@ def main() -> None:
     require(activity.attrib[ANDROID + "name"] == ".MainActivity", "Wrong launcher class")
     require(activity.attrib[ANDROID + "exported"] == "true", "Launcher must be exported")
     services = {service.attrib[ANDROID + "name"]: service for service in manifest.findall("application/service")}
-    recorder_source = text("app/src/main/kotlin/dev/ratemock/app/recording/RecorderService.kt")
     require("location_age_s" in recorder_source, "Recorder CSV must include location age")
     require("elapsedRealtimeNanos" in recorder_source, "Recorder must calculate location age from monotonic time")
     simulator = services[".simulation.SimulatorService"]

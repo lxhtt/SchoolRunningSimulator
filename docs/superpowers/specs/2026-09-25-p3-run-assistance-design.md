@@ -8,7 +8,7 @@
 
 `recordings` 只保存真实 GPS、逐步传感器和累计计数器观察；`simulations` 只保存合成历史。实跑导出只读取当前真实记录文件，模拟导出只读取模拟历史。导出文件由用户通过 Android `CreateDocument` 选择目标位置，不自动分享或上传。
 
-真实 CSV 增加明确的 `# provenance=real_observation` 元数据，以及原有 `location_age_s` 字段。JSON/GPX 导出保留真实观测来源和 GPS 新鲜度语义；没有合格 GPS 数据时拒绝导出，不用模拟坐标填充。
+应用私有原始 CSV 保持现有表头，避免破坏 S7→S6 桥接和旧文件读取；用户主动导出的 CSV 增加 `# provenance=real_observation` 元数据，并保留 `location_age_s` 字段。JSON/GPX 导出保留真实观测来源和 GPS 新鲜度语义；没有合格 GPS 数据时拒绝导出，不用模拟坐标填充。
 
 ## P3 提示
 
@@ -18,7 +18,7 @@ Android 层负责把提示意图映射为本地化文本和 `TextToSpeech` 播�
 
 ## 实跑导出
 
-记录页增加导出入口和格式菜单，使用 `CreateDocument` 支持 CSV、JSON、GPX。导出选择当前或最近一个已停止的真实 CSV，并显示样本数、持续时间、GPS 新鲜度概况和 provenance。正在写入的文件不得导出，空文件、无有效 GPS、解析失败和目标不可写都给出错误状态。
+记录页增加导出入口和格式菜单，使用 `CreateDocument` 支持 CSV、JSON、GPX。只允许选择最近一个已停止的真实 CSV，并显示样本数、持续时间、GPS 新鲜度概况和 provenance。正在写入的文件不得导出，空文件、无有效 GPS、解析失败和目标不可写都给出错误状态。
 
 CSV 导出保留原始真实观测字段。JSON 使用真实样本、真实 GPS 轨迹和明确的 `real_observation` 标记。GPX 只由真实纬经度和有效 ISO-8601 时间戳生成；不添加合成点。
 

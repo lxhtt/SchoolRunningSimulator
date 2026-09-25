@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -20,9 +21,14 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.speech.tts.TextToSpeech
+import java.util.Locale
 import dev.ratemock.app.R
 import dev.ratemock.core.truth.CadenceEstimator
 import dev.ratemock.core.truth.StepCounterCheck
+import dev.ratemock.core.truth.RunPromptDecider
+import dev.ratemock.core.truth.PromptInput
+import dev.ratemock.core.truth.RunPrompt
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -40,6 +46,10 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     private var targetCadenceSpm = 170.0
     private val cadenceEstimator = CadenceEstimator()
     private var counterCheck = StepCounterCheck()
+    private val promptDecider = RunPromptDecider()
+    private var textToSpeech: TextToSpeech? = null
+    private var speechReady = false
+    private var voiceEnabled = false
     private var detectorSteps = 0L
     private var lastDetectorNs = 0L
     private var lastCounterNs = 0L
@@ -85,7 +95,24 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     private fun startRecording(intent: Intent? = null) {
         if (writer != null) return
         if (!hasLocationPermission()) return
-        targetCadenceSpm = intent?.getDoubleExtra(EXTRA_TARGET_CADENCE_SPM, 170.0)?.takeIf { it.isFinite() } ?: 170.0
+        targetCadenceSpm = intent?.getDoubleExtra(EXTRA_TARGET_CADENCE_SPM, 170.0)?.takeIf { it.isFinite() && it in 90.0..210.0 } ?: 170.0
+        voiceEnabled = intent?.getBooleanExtra(EXTRA_VOICE_ENABLED, false) == true
+        promptDecider.reset()
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putString(KEY_VOICE_STATUS, if (voiceEnabled) "initializing" else "disabled")
+            .apply()
+        if (voiceEnabled) {
+            textToSpeech = TextToSpeech(this) { status ->
+                callbackHandler.post {
+                    val language = textToSpeech?.setLanguage(Locale.SIMPLIFIED_CHINESE)
+                    speechReady = status == TextToSpeech.SUCCESS && language != null &&
+                        language != TextToSpeech.LANG_MISSING_DATA && language != TextToSpeech.LANG_NOT_SUPPORTED
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putString(KEY_VOICE_STATUS, if (speechReady) "ready" else "unavailable")
+                        .apply()
+                }
+            }
+        }
         cadenceEstimator.reset()
         counterCheck = StepCounterCheck()
         detectorSteps = 0L
@@ -118,6 +145,7 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
             it.flush()
         }
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putString(KEY_FILE_NAME, recordingFile!!.name)
             .putBoolean(KEY_ACTIVE, true)
             .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
             .apply()
@@ -159,6 +187,13 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         latestStepCounter = null
         latestLocation = null
         cadenceEstimator.reset()
+        promptDecider.reset()
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+        textToSpeech = null
+        speechReady = false
+        voiceEnabled = false
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_VOICE_STATUS, "disabled").apply()
         recordingFile = null
         recordingStartedAtMs = 0L
         heartbeatHandler.removeCallbacks(heartbeat)
@@ -216,6 +251,7 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
             lastDetectorNs = event.timestamp
             detectorSteps++
             val cadence = cadenceEstimator.addStep(event.timestamp / 1_000_000_000.0)
+            speakPrompt(cadence)
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putLong(KEY_LAST_STEP_NS, event.timestamp)
                 .putFloat(KEY_CADENCE_SPM, cadence?.toFloat() ?: 0f)
@@ -223,6 +259,28 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
                 .putString(KEY_CADENCE_SOURCE, if (cadence != null) "step_detector" else "warming_up")
                 .apply()
         }
+    }
+
+    private fun speakPrompt(cadence: Double?) {
+        if (!voiceEnabled || !speechReady) return
+        val location = latestLocation
+        val nowNs = SystemClock.elapsedRealtimeNanos()
+        val prompt = promptDecider.decide(PromptInput(
+            nowSeconds = nowNs / 1_000_000_000.0,
+            targetCadenceSpm = targetCadenceSpm,
+            measuredCadenceSpm = cadence,
+            cadenceFresh = cadence != null && cadence.isFinite(),
+            gpsFresh = location != null && nowNs - location.elapsedRealtimeNanos in 0L..5_000_000_000L &&
+                location.hasAccuracy() && location.accuracy <= 25f,
+        )) ?: return
+        val text = when (prompt) {
+            RunPrompt.WAITING_FOR_CADENCE -> getString(R.string.real_voice_waiting)
+            RunPrompt.GPS_STALE -> getString(R.string.real_voice_gps_stale)
+            RunPrompt.INCREASE_CADENCE -> getString(R.string.real_voice_increase, targetCadenceSpm.toInt())
+            RunPrompt.DECREASE_CADENCE -> getString(R.string.real_voice_decrease, targetCadenceSpm.toInt())
+            RunPrompt.HOLD_CADENCE -> getString(R.string.real_voice_hold)
+        }
+        textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ratemock-${prompt.name}")
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
@@ -251,12 +309,19 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         }
     }
 
-    private fun notification(text: String): Notification = Notification.Builder(this, CHANNEL_ID)
-        .setContentTitle(getString(R.string.app_name))
-        .setContentText(text)
-        .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-        .setOngoing(true)
-        .build()
+    private fun notification(text: String): Notification {
+        val stopIntent = PendingIntent.getService(
+            this, 1001, Intent(this, RecorderService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .addAction(android.R.drawable.ic_media_pause, getString(R.string.recorder_stop), stopIntent)
+            .setOngoing(true)
+            .build()
+    }
 
     companion object {
         const val ACTION_START = "dev.ratemock.app.recording.START"
@@ -266,6 +331,9 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         const val KEY_ACTIVE = "active"
         const val KEY_HEARTBEAT_MS = "heartbeat_ms"
         const val EXTRA_TARGET_CADENCE_SPM = "target_cadence_spm"
+        const val EXTRA_VOICE_ENABLED = "voice_enabled"
+        const val KEY_VOICE_STATUS = "voice_status"
+        const val KEY_FILE_NAME = "file_name"
         const val KEY_TARGET_CADENCE_SPM = "target_cadence_spm"
         const val KEY_CADENCE_SPM = "cadence_spm"
         const val KEY_CADENCE_AVAILABLE = "cadence_available"

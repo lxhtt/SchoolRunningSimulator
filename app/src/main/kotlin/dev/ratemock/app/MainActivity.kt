@@ -5,12 +5,14 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import dev.ratemock.core.export.RealRunExport
 import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -27,9 +29,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -42,6 +47,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -59,6 +65,7 @@ import dev.ratemock.app.ui.RateMockTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -71,12 +78,12 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
                     Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            TabRow(selectedTabIndex = selectedTab, modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            TabRow(selectedTabIndex = selectedTab, modifier = Modifier.fillMaxWidth()) {
                                 Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(stringResource(R.string.sim_tab)) })
                                 Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(stringResource(R.string.record_tab)) })
                             }
-                            TextButton(onClick = { openBatterySettings() }) { Text(stringResource(R.string.battery_settings)) }
+                            TextButton(onClick = { openBatterySettings() }, modifier = Modifier.align(Alignment.End)) { Text(stringResource(R.string.battery_settings)) }
                         }
                         Text(
                             stringResource(R.string.battery_guidance),
@@ -103,11 +110,22 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 RecorderScreen(
                                     onRequestPermissions = { requestRecordingPermissions() },
-                                    onStartRecording = { cadence ->
-                                        val intent = Intent(this@MainActivity, RecorderService::class.java)
-                                            .setAction(RecorderService.ACTION_START)
-                                            .putExtra(RecorderService.EXTRA_TARGET_CADENCE_SPM, cadence)
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+                                    onStartRecording = { cadence, voiceEnabled ->
+                                        val permissionsGranted = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
+                                            android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                                            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                                            android.content.pm.PackageManager.PERMISSION_GRANTED
+                                        if (!permissionsGranted || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                                            checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION) !=
+                                            android.content.pm.PackageManager.PERMISSION_GRANTED)) {
+                                            false
+                                        } else runCatching {
+                                            val intent = Intent(this@MainActivity, RecorderService::class.java)
+                                                .setAction(RecorderService.ACTION_START)
+                                                .putExtra(RecorderService.EXTRA_TARGET_CADENCE_SPM, cadence)
+                                                .putExtra(RecorderService.EXTRA_VOICE_ENABLED, voiceEnabled)
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+                                        }.isSuccess
                                     },
                                     onStopRecording = {
                                         startService(Intent(this@MainActivity, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
@@ -182,11 +200,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun RecorderScreen(
     onRequestPermissions: () -> Unit,
-    onStartRecording: (Double) -> Unit,
+    onStartRecording: (Double, Boolean) -> Boolean,
     onStopRecording: () -> Unit,
 ) {
     val context = LocalContext.current
     var targetCadence by rememberSaveable { mutableFloatStateOf(170f) }
+    var voiceEnabled by rememberSaveable { mutableStateOf(false) }
+    var startFailed by rememberSaveable { mutableStateOf(false) }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -216,9 +236,14 @@ private fun RecorderScreen(
                         }
                         Text(stringResource(R.string.real_target_cadence, targetCadence.roundToInt()))
                         Slider(value = targetCadence, onValueChange = { targetCadence = (it / 5f).roundToInt() * 5f }, valueRange = 90f..210f)
-                        Button(onClick = { onStartRecording(targetCadence.toDouble()) }, modifier = Modifier.fillMaxWidth()) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Text(stringResource(R.string.real_voice_toggle), modifier = Modifier.weight(1f))
+                            Switch(checked = voiceEnabled, onCheckedChange = { voiceEnabled = it })
+                        }
+                        Button(onClick = { startFailed = !onStartRecording(targetCadence.toDouble(), voiceEnabled) }, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.recorder_start))
                         }
+                        if (startFailed) Text(stringResource(R.string.real_start_error), color = MaterialTheme.colorScheme.error)
                         OutlinedButton(onClick = onStopRecording, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.recorder_stop))
                         }
@@ -239,10 +264,13 @@ private data class RecorderUiSnapshot(
     val active: Boolean,
     val fileName: String,
     val sampleCount: Int,
+    val freshFixes: Int,
+    val gpsFresh: Boolean,
     val heartbeatAgeMs: Long?,
     val targetCadenceSpm: Float,
     val actualCadenceSpm: Float?,
     val cadenceSource: String,
+    val voiceStatus: String,
     val locationQuality: String,
     val counterQuality: String,
     val summary: String,
@@ -253,6 +281,33 @@ private data class RecorderUiSnapshot(
 @Composable
 private fun RecorderPanel(context: Context) {
     var snapshot by remember { mutableStateOf(readRecorderSnapshot(context)) }
+    var exportMenu by remember { mutableStateOf(false) }
+    var exportError by remember { mutableStateOf<String?>(null) }
+    var exportFile by rememberSaveable { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    fun save(uri: Uri?, format: String) {
+        if (uri == null) return
+        scope.launch {
+            exportError = withContext(Dispatchers.IO) {
+                runCatching<String?> {
+                    val fileName = exportFile ?: error("No recording selected")
+                    val recording = loadStoppedRecording(context, fileName)
+                    val contents = when (format) {
+                        "csv" -> RealRunExport.csv(recording)
+                        "json" -> RealRunExport.json(recording)
+                        "gpx" -> RealRunExport.gpx(recording)
+                        else -> error("Unsupported format")
+                    }
+                    context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(contents) }
+                        ?: error("Document is not writable")
+                    null
+                }.getOrElse { context.getString(R.string.real_export_error) }
+            }
+        }
+    }
+    val exportCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { save(it, "csv") }
+    val exportJson = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { save(it, "json") }
+    val exportGpx = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { save(it, "gpx") }
     LaunchedEffect(context) {
         while (true) {
             snapshot = withContext(Dispatchers.IO) { readRecorderSnapshot(context) }
@@ -275,6 +330,13 @@ private fun RecorderPanel(context: Context) {
                 Text(snapshot.actualCadenceSpm?.let { stringResource(R.string.real_actual_cadence, it) }
                     ?: stringResource(if (snapshot.cadenceSource == "warming_up") R.string.real_cadence_warming else R.string.real_cadence_unavailable))
                 Text(stringResource(R.string.real_location_status, snapshot.locationQuality))
+                Text(stringResource(when {
+                    snapshot.actualCadenceSpm == null -> R.string.real_voice_waiting
+                    !snapshot.gpsFresh -> R.string.real_voice_gps_stale
+                    snapshot.actualCadenceSpm < snapshot.targetCadenceSpm - 5 -> R.string.real_voice_increase
+                    snapshot.actualCadenceSpm > snapshot.targetCadenceSpm + 5 -> R.string.real_voice_decrease
+                    else -> R.string.real_voice_hold
+                }, snapshot.targetCadenceSpm.roundToInt()))
                 Text(stringResource(R.string.real_counter_status, when (snapshot.counterQuality) {
                     "RESET" -> stringResource(R.string.real_counter_reset)
                     "STALE" -> stringResource(R.string.real_counter_stale)
@@ -289,6 +351,43 @@ private fun RecorderPanel(context: Context) {
                     ?: stringResource(R.string.recorder_no_heartbeat),
             )
             Text(snapshot.summary)
+            Text(stringResource(R.string.real_provenance, snapshot.freshFixes))
+            Text(stringResource(R.string.real_voice_status, when (snapshot.voiceStatus) {
+                "ready" -> stringResource(R.string.real_voice_ready)
+                "unavailable" -> stringResource(R.string.real_voice_unavailable)
+                "initializing" -> stringResource(R.string.real_voice_initializing)
+                else -> stringResource(R.string.real_voice_disabled)
+            }))
+            Box {
+                OutlinedButton(
+                    enabled = !snapshot.active && snapshot.sampleCount > 0,
+                    onClick = { exportMenu = true },
+                ) { Text(stringResource(R.string.real_export)) }
+                DropdownMenu(expanded = exportMenu, onDismissRequest = { exportMenu = false }) {
+                    listOf("csv", "json", "gpx").forEach { format ->
+                        DropdownMenuItem(text = { Text(format.uppercase()) }, onClick = {
+                            exportMenu = false
+                            scope.launch {
+                                val fileName = snapshot.fileName
+                                exportError = withContext(Dispatchers.IO) {
+                                    runCatching { loadStoppedRecording(context, fileName) }
+                                        .exceptionOrNull()?.let { context.getString(R.string.real_export_error) }
+                                }
+                                if (exportError == null) {
+                                    exportFile = fileName
+                                    val name = fileName.removeSuffix(".csv") + ".$format"
+                                    when (format) {
+                                        "csv" -> exportCsv.launch(name)
+                                        "json" -> exportJson.launch(name)
+                                        "gpx" -> exportGpx.launch(name)
+                                    }
+                                }
+                            }
+                        })
+                    }
+                }
+            }
+            exportError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text(stringResource(R.string.recorder_latest), style = MaterialTheme.typography.labelLarge)
             Text(snapshot.latest, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
             Text(stringResource(R.string.recorder_log_title), style = MaterialTheme.typography.labelLarge)
@@ -303,6 +402,16 @@ private fun RecorderPanel(context: Context) {
     }
 }
 
+private fun loadStoppedRecording(context: Context, fileName: String): RealRunExport.Recording {
+    require(fileName.endsWith(".csv") && fileName.matches(Regex("recording-[0-9]+\\.csv")))
+    val preferences = context.getSharedPreferences("recorder_status", Context.MODE_PRIVATE)
+    require(!preferences.getBoolean(RecorderService.KEY_ACTIVE, false) ||
+        System.currentTimeMillis() - preferences.getLong(RecorderService.KEY_HEARTBEAT_MS, 0L) >= 3_000L) { "Recording is active" }
+    val file = File(File(context.filesDir, "recordings"), fileName)
+    require(file.isFile && file.parentFile == File(context.filesDir, "recordings")) { "Recording file unavailable" }
+    return RealRunExport.parse(file.readText())
+}
+
 private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
     val directory = File(context.filesDir, "recordings")
     val file = directory.listFiles { candidate -> candidate.extension == "csv" }
@@ -310,11 +419,12 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
     val preferences = context.getSharedPreferences("recorder_status", Context.MODE_PRIVATE)
     val heartbeat = preferences.getLong(RecorderService.KEY_HEARTBEAT_MS, 0L)
     val active = preferences.getBoolean(RecorderService.KEY_ACTIVE, false) &&
-        System.currentTimeMillis() - heartbeat < 3_000L
+        System.currentTimeMillis() - heartbeat in 0L..2_999L
     val lastStepNs = preferences.getLong(RecorderService.KEY_LAST_STEP_NS, 0L)
     val lastFixNs = preferences.getLong(RecorderService.KEY_LOCATION_FIX_NS, 0L)
     val nowNs = SystemClock.elapsedRealtimeNanos()
     var sampleCount = 0
+    var freshFixes = 0
     var firstElapsed = 0.0
     var lastElapsed = 0.0
     var firstStep: Double? = null
@@ -328,6 +438,9 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
                 sampleCount += 1
                 val columns = line.split(',')
                 val elapsed = columns.getOrNull(1)?.toDoubleOrNull() ?: 0.0
+                val age = columns.getOrNull(8)?.toDoubleOrNull()
+                val accuracy = columns.getOrNull(5)?.toDoubleOrNull()
+                if (age != null && age in 0.0..5.0 && accuracy != null && accuracy in 0.0..25.0) freshFixes++
                 val steps = columns.getOrNull(7)?.toDoubleOrNull()
                 if (sampleCount == 1) firstElapsed = elapsed
                 lastElapsed = elapsed
@@ -343,12 +456,16 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
         active = active,
         fileName = file?.name ?: context.getString(R.string.recorder_no_file),
         sampleCount = sampleCount,
+        freshFixes = freshFixes,
+        gpsFresh = lastFixNs > 0L && nowNs - lastFixNs in 0L..5_000_000_000L &&
+            preferences.getString(RecorderService.KEY_LOCATION_QUALITY, "waiting") == "fresh",
         heartbeatAgeMs = if (heartbeat == 0L) null else (System.currentTimeMillis() - heartbeat).coerceAtLeast(0L),
         targetCadenceSpm = preferences.getFloat(RecorderService.KEY_TARGET_CADENCE_SPM, 170f),
         actualCadenceSpm = preferences.getFloat(RecorderService.KEY_CADENCE_SPM, 0f)
             .takeIf { active && preferences.getBoolean(RecorderService.KEY_CADENCE_AVAILABLE, false) &&
                 lastStepNs > 0L && nowNs - lastStepNs in 0L..3_000_000_000L },
         cadenceSource = preferences.getString(RecorderService.KEY_CADENCE_SOURCE, "unavailable") ?: "unavailable",
+        voiceStatus = preferences.getString(RecorderService.KEY_VOICE_STATUS, "disabled") ?: "disabled",
         locationQuality = if (lastFixNs == 0L) "等待 GPS" else if (nowNs - lastFixNs !in 0L..5_000_000_000L) "定位已过期"
             else if (preferences.getString(RecorderService.KEY_LOCATION_QUALITY, "waiting") == "fresh") "定位新鲜" else "精度较低",
         counterQuality = preferences.getString(RecorderService.KEY_COUNTER_QUALITY, "WAITING")?.let { quality ->
