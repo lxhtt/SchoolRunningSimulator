@@ -49,7 +49,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.floor
 import androidx.compose.ui.semantics.heading
@@ -121,9 +120,9 @@ fun PositionScreen(
 
     fun applyPoint(candidate: PositionPoint) {
         point = candidate
-        latitudeText = "%.7f".format(candidate.latitude)
-        longitudeText = "%.7f".format(candidate.longitude)
-        altitudeText = "%.1f".format(candidate.altitude)
+        latitudeText = candidate.latitude.toString()
+        longitudeText = candidate.longitude.toString()
+        altitudeText = candidate.altitude.toString()
         route = (route + candidate).takeLast(200)
         if (serviceStatus == "RUNNING") onServiceAction(MockLocationService.ACTION_UPDATE, candidate)
     }
@@ -243,7 +242,7 @@ fun PositionScreen(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(item.name)
-                        Text("%.6f, %.6f".format(item.point.latitude, item.point.longitude), style = MaterialTheme.typography.bodySmall)
+                        Text("${item.point.latitude}, ${item.point.longitude}", style = MaterialTheme.typography.bodySmall)
                     }
                     TextButton(onClick = { applyPoint(item.point) }) { Text("载入") }
                     TextButton(onClick = { history = store.remove(index) }) { Text("删除") }
@@ -303,7 +302,7 @@ private fun CoordinateMap(point: PositionPoint?, route: List<PositionPoint>, onT
                 tiles.forEach { tile ->
                     val left = (size.width / 2 + (tile.x - cx) * 256).roundToInt()
                     val top = (size.height / 2 + (tile.y - cy) * 256).roundToInt()
-                    drawImage(tile.bitmap.asImageBitmap(), topLeft = IntOffset(left, top))
+                    drawImage(tile.bitmap.asImageBitmap(), topLeft = Offset(left.toFloat(), top.toFloat()))
                 }
                 if (tiles.isEmpty()) {
                     val grid = Color.Gray.copy(alpha = 0.25f)
