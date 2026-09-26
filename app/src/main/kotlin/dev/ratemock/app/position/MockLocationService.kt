@@ -285,6 +285,7 @@ class MockLocationService : Service() {
         const val KEY_ERROR = "error"
         const val KEY_HEARTBEAT = "heartbeat"
         private const val CHANNEL = "ratemock-mock-location"
+        private const val NOTIFICATION_ID = 1003
         private const val WAKE_LOCK_MARGIN_MS = 60_000L
     }
 }
