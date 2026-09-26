@@ -78,13 +78,14 @@ class SimulatorService : Service() {
                     failure(error)
                     return START_NOT_STICKY
                 }
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(KEY_HISTORY_FILE)
+                    .putBoolean(KEY_HISTORY_CLOSED, false).remove(KEY_ERROR).apply()
                 val speed = intent?.getDoubleExtra(EXTRA_SPEED_MPS, Double.NaN) ?: Double.NaN
                 val duration = intent?.getDoubleExtra(EXTRA_DURATION_SECONDS, Double.NaN) ?: Double.NaN
                 val cadence = intent?.getDoubleExtra(EXTRA_MANUAL_CADENCE_SPM, Double.NaN)
                     ?.takeIf { it.isFinite() }
                 val slowdown = intent?.getDoubleExtra(EXTRA_FATIGUE_REDUCTION, 0.0) ?: 0.0
                 handler.post {
-                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(KEY_HISTORY_FILE).remove(KEY_ERROR).apply()
                     try {
                         session = InteractiveSimulation(speed, duration, cadence, slowdown)
                         val directory = File(filesDir, "simulations").apply { mkdirs() }
@@ -163,7 +164,7 @@ class SimulatorService : Service() {
             .putLong(KEY_STEPS, snapshot.steps)
             .apply()
         if (snapshot.status !in ACTIVE) {
-            closeHistory()
+            closeHistory(success = true)
             handler.removeCallbacks(ticker)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -195,9 +196,12 @@ class SimulatorService : Service() {
         }
     }
 
-    private fun closeHistory() {
-        runCatching { historyWriter?.close() }
+    private fun closeHistory(success: Boolean = false) {
+        val writer = historyWriter ?: return
         historyWriter = null
+        val closed = runCatching { writer.close() }.isSuccess
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putBoolean(KEY_HISTORY_CLOSED, closed && success).apply()
     }
 
     private fun progressText(snapshot: SimulationSnapshot): String {
@@ -240,7 +244,7 @@ class SimulatorService : Service() {
     )
 
     private fun failure(error: Exception) {
-        closeHistory()
+        closeHistory(success = false)
         releaseWakeLock()
         session = null
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -259,7 +263,7 @@ class SimulatorService : Service() {
     override fun onDestroy() {
         handler.removeCallbacks(ticker)
         handler.post {
-            closeHistory()
+            closeHistory(success = false)
             releaseWakeLock()
             if (session?.snapshot()?.status in ACTIVE) {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_STATUS, STATUS_INTERRUPTED).apply()
@@ -296,6 +300,7 @@ class SimulatorService : Service() {
         const val KEY_CADENCE_SPM = "cadence_spm"
         const val KEY_STEPS = "steps"
         const val KEY_HISTORY_FILE = "history_file"
+        const val KEY_HISTORY_CLOSED = "history_closed"
         const val ERROR_HISTORY_WRITE = "HISTORY_WRITE"
         const val KEY_ERROR = "error"
         const val ERROR_INFEASIBLE = "INFEASIBLE"

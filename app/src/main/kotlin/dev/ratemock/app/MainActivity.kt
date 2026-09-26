@@ -63,7 +63,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import dev.ratemock.app.recording.RecorderService
 import dev.ratemock.app.simulation.SimulatorScreen
+import dev.ratemock.app.position.MockLocationService
+import dev.ratemock.app.position.PositionScreen
 import dev.ratemock.app.simulation.SimulatorService
+import dev.ratemock.core.position.PositionPoint
 import dev.ratemock.app.ui.RateMockTheme
 import dev.ratemock.receiverui.ReplayReceiverScreen
 import kotlinx.coroutines.Dispatchers
@@ -85,8 +88,9 @@ class MainActivity : ComponentActivity() {
                         ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp, modifier = Modifier.fillMaxWidth()) {
                             Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(stringResource(R.string.sim_tab)) })
                             Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(stringResource(R.string.record_tab)) })
-                            Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text(stringResource(R.string.diagnostic_tab)) })
-                            Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, text = { Text(stringResource(R.string.receiver_tab)) })
+                            Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text(stringResource(R.string.position_tab)) })
+                            Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, text = { Text(stringResource(R.string.diagnostic_tab)) })
+                            Tab(selected = selectedTab == 4, onClick = { selectedTab = 4 }, text = { Text(stringResource(R.string.receiver_tab)) })
                         }
                         Box(modifier = Modifier.weight(1f)) {
                             if (selectedTab == 0) {
@@ -130,6 +134,12 @@ class MainActivity : ComponentActivity() {
                                     },
                                 )
                             } else if (selectedTab == 2) {
+                                PositionScreen(
+                                    onRequestPermissions = { requestPositionPermissions() },
+                                    onOpenMockSettings = { openMockLocationSettings() },
+                                    onServiceAction = { action, point -> sendMockLocationAction(action, point) },
+                                )
+                            } else if (selectedTab == 3) {
                                 DiagnosticScreen(onRequestPermissions = { requestRecordingPermissions() })
                             } else {
                                 ReplayReceiverScreen()
@@ -142,6 +152,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
+    private fun openMockLocationSettings() {
+        runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }
+    }
+
+    private fun sendMockLocationAction(action: String, point: PositionPoint?) {
+        runCatching {
+            val intent = Intent(this, MockLocationService::class.java).setAction(action)
+            point?.let {
+                intent.putExtra(MockLocationService.LAT, it.latitude)
+                    .putExtra(MockLocationService.LON, it.longitude)
+                    .putExtra(MockLocationService.ALT, it.altitude)
+            }
+            if (action == MockLocationService.ACTION_START || action == MockLocationService.ACTION_ROUTE_START) startForegroundService(intent) else startService(intent)
+        }.onFailure { error ->
+            getSharedPreferences(MockLocationService.PREFS, MODE_PRIVATE).edit()
+                .putString(MockLocationService.KEY_STATUS, "ERROR")
+                .putString(MockLocationService.KEY_ERROR, error.message?.take(160) ?: "无法发送定位服务操作")
+                .apply()
+        }
+    }
 
     private fun openBatterySettings() {
         try {
@@ -175,6 +206,15 @@ class MainActivity : ComponentActivity() {
     private val notificationLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
+
+    private fun requestPositionPermissions() {
+        val permissions = buildList {
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+        }.toTypedArray()
+        permissionLauncher.launch(permissions)
+    }
 
     private fun requestRecordingPermissions() {
         val permissions = buildList {

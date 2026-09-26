@@ -24,6 +24,7 @@ import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import java.util.Locale
 import dev.ratemock.app.R
+import dev.ratemock.app.position.MockLocationService
 import dev.ratemock.core.truth.CadenceEstimator
 import dev.ratemock.core.truth.StepCounterCheck
 import dev.ratemock.core.truth.RunPromptDecider
@@ -110,10 +111,16 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     private fun startRecording(intent: Intent? = null) {
         if (writer != null) return
         writeFailure = null
-        if (!hasLocationPermission()) {
+        val mockPreferences = getSharedPreferences(MockLocationService.PREFS, MODE_PRIVATE)
+        val mockStatus = mockPreferences.getString(MockLocationService.KEY_STATUS, "IDLE")
+        val mockHeartbeat = mockPreferences.getLong(MockLocationService.KEY_HEARTBEAT, 0L)
+        val mockAgeMs = System.currentTimeMillis() - mockHeartbeat
+        val mockActive = mockStatus in setOf("RUNNING", "PAUSED", "LOADING") &&
+            mockHeartbeat > 0L && mockAgeMs >= 0L && mockAgeMs <= 5_000L
+        if (!hasLocationPermission() || mockActive) {
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putString(KEY_STATE, RecordingState.ERROR.name)
-                .putString(KEY_ERROR, "Location permission is required")
+                .putString(KEY_ERROR, "Location permission is required or mock location is active")
                 .putBoolean(KEY_ACTIVE, false)
                 .putString(KEY_CLOSED_FILE_NAME, null)
                 .putLong(KEY_STATUS_UPDATED_MS, System.currentTimeMillis())
@@ -305,6 +312,13 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     }
 
     override fun onLocationChanged(location: Location) {
+        if (location.isFromMockProvider) {
+            latestLocation = null
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_LOCATION_QUALITY, "mock_rejected")
+                .apply()
+            return
+        }
         latestLocation = Location(location)
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putLong(KEY_LOCATION_FIX_NS, location.elapsedRealtimeNanos)
@@ -440,7 +454,7 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         const val ACTION_START = "dev.ratemock.app.recording.START"
         const val ACTION_STOP = "dev.ratemock.app.recording.STOP"
         private const val HEARTBEAT_INTERVAL_MS = 1_000L
-        private const val PREFS = "recorder_status"
+        const val PREFS = "recorder_status"
         const val KEY_ACTIVE = "active"
         const val KEY_HEARTBEAT_MS = "heartbeat_ms"
         const val EXTRA_TARGET_CADENCE_SPM = "target_cadence_spm"
