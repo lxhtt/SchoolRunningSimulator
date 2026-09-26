@@ -19,4 +19,4 @@ The checked-in `gradlew`, `gradlew.bat`, and `gradle/wrapper/gradle-wrapper.jar`
 
 Kotlin, Android/Jetpack Compose, JUnit 5, and the pinned GitHub Actions used by this project retain their respective upstream terms. Their use is acknowledged in [`CREDITS.md`](CREDITS.md). Dependency versions are maintained in `gradle/libs.versions.toml`; transitive dependency licenses must be checked against the resolved dependency graph before redistribution.
 
-No GoGoGo application source, icons, signing keys, or Baidu SDK were copied into this project. Mention of a project in research documentation is not a code dependency or an endorsement.
+No GoGoGo application source, icons, signing keys, or Baidu SDK were copied into this project. The original RateMock position workbench optionally requests public OpenStreetMap raster tiles and Nominatim search at runtime; neither service is a bundled code dependency. Their usage policies and OSM data attribution apply when the network features are used. Mention of a project in research documentation is not a code dependency or an endorsement.

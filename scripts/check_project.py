@@ -192,20 +192,36 @@ def main() -> None:
             "Recorder notification must expose a stop action")
     require('return START_NOT_STICKY' in recorder_source,
             "Recorder must not restart an unresumable writer session")
-    require('"Location permission is required"' in recorder_source,
+    require('"Location permission is required or mock location is active"' in recorder_source,
             "Recorder must persist permission startup failures")
     require("RunPromptDecider" in recorder_source and "TYPE_STEP_DETECTOR" in recorder_source,
             "Real prompt must derive cadence from detector events")
+    route_source = text("sim-core/src/main/kotlin/dev/ratemock/core/position/SimulationRoute.kt")
+    mock_source = text("app/src/main/kotlin/dev/ratemock/app/position/MockLocationService.kt")
+    simulator_source = text("app/src/main/kotlin/dev/ratemock/app/simulation/SimulatorService.kt")
+    require('KEY_HISTORY_CLOSED' in simulator_source and 'closeHistory(success = true)' in simulator_source,
+            "Simulation history must be marked closed only after successful termination")
+    require('KEY_HISTORY_CLOSED' in mock_source and 'SimulationRoute.parse' in mock_source and
+            '"simulations"' in mock_source and '"recordings"' not in mock_source,
+            "Mock replay must only load closed simulation history")
+    require('Missing simulation provenance' in route_source and '10_000' in route_source and
+            '14_400.0' in route_source, "Simulation route parser must remain bounded and provenance-aware")
+    require('ACTION_ROUTE_START' in text("app/src/main/kotlin/dev/ratemock/app/MainActivity.kt"),
+            "Simulation route start must use a foreground service")
     for path in (ROOT / "app/src/main/kotlin").rglob("*.kt"):
         content = path.read_text()
-        for forbidden in ("addTestProvider(", "setTestProviderLocation(", "XposedBridge."):
-            require(forbidden not in content, f"Injection API forbidden in {path}")
+        for forbidden in ("XposedBridge.",):
+            require(forbidden not in content, f"Forbidden bypass API in {path}")
+        if path.relative_to(ROOT).as_posix() != "app/src/main/kotlin/dev/ratemock/app/position/MockLocationService.kt":
+            for forbidden in ("addTestProvider(", "setTestProviderLocation("):
+                require(forbidden not in content, f"Mock provider API outside service in {path}")
 
     manifest = ET.fromstring(text("app/src/main/AndroidManifest.xml"))
     permissions = {element.attrib.get(ANDROID + "name") for element in manifest.findall("uses-permission")}
     require(
         {
             "android.permission.ACCESS_COARSE_LOCATION",
+            "android.permission.INTERNET",
             "android.permission.ACCESS_FINE_LOCATION",
             "android.permission.ACTIVITY_RECOGNITION",
             "android.permission.FOREGROUND_SERVICE",
@@ -223,6 +239,9 @@ def main() -> None:
     services = {service.attrib[ANDROID + "name"]: service for service in manifest.findall("application/service")}
     require("location_age_s" in recorder_source, "Recorder CSV must include location age")
     require("elapsedRealtimeNanos" in recorder_source, "Recorder must calculate location age from monotonic time")
+    mock_location = services[".position.MockLocationService"]
+    require(mock_location.attrib[ANDROID + "exported"] == "false", "Mock location service must not be exported")
+    require(mock_location.attrib[ANDROID + "foregroundServiceType"] == "location", "Mock location service type changed")
     simulator = services[".simulation.SimulatorService"]
     require(simulator.attrib[ANDROID + "exported"] == "false", "Simulator must not be exported")
     require(simulator.attrib[ANDROID + "foregroundServiceType"] == "specialUse", "Simulator service type changed")

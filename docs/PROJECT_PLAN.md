@@ -1,21 +1,21 @@
 # 校园跑步频模拟器 — 项目计划
 
-> 状态：P0–P1 源码、S7→S6 桥接、云端构建和 JVM/Python 验证已完成；P2 模拟跑台、P3 实跑辅助、P5 本地安全回放和 P6 生命周期/导出硬化已实现。设备 ROM 的息屏电源管理限制已记录，不能泛化为所有 Android 设备行为。
+> 状态：P0–P7 原有功能已通过 GitHub Actions run `36252420344` 和真机冒烟验收；位置工作台为新一轮未提交的实现，仍待 CI 编译、lint 和真机验收。此文档的历史分期表保留当时决策；位置工作台的最新范围以 [`2026-09-27-position-workbench-design.md`](superpowers/specs/2026-09-27-position-workbench-design.md) 为准。
 > 当前实现状态以最近 GitHub Actions run、`docs/superpowers/specs/2026-09-26-recording-lifecycle-export-design.md` 和 `docs/superpowers/specs/2026-09-26-p6-preflight-presets-design.md` 为准。
 
 ## 0. 一句话定义
 
-一个独立 Android 应用：由用户给出速度与步频目标，在应用内生成可解释、可复核的模拟历史，同时提供独立的真实跑步记录与显式导出。物理内核保持纯 Kotlin/JVM；系统级定位/传感器注入不属于当前交付。
+一个独立 Android 应用：由用户给出速度与步频目标，在应用内生成可解释、可复核的模拟历史，同时提供独立的真实跑步记录与显式导出。新位置工作台提供用户显式启动的 Android Mock Location，但不实现传感器注入或第三方检测绕过。物理内核保持纯 Kotlin/JVM。
 
 ## 1. 已确认的需求边界
 
 | 维度 | 结论 |
 |---|---|
 | 形态 | A. 独立 App，真实跑（不依赖目标 App） |
-| 注入 | 不实现系统级 Mock Location 或 root + Xposed/LSPosed 注入；仅有纯本地事件协议与只读诊断回放，真实记录和模拟数据分离 |
+| 注入 | 新位置工作台提供 Android test provider Mock Location；不实现步频传感器注入或 root + Xposed/LSPosed，P5 本地回放仍是只读诊断 |
 | 首版 | **内置仿真跑台**（In-app Simulator） |
 | 构建 | **本地不装 Android SDK**，APK 走 CI（详见 §4.0） |
-| P7 | 本应用真实传感器诊断与自有本地 JSON 测试接收端已接入；独立接收 APK 与主 APK 的 CI/真机验收未完成（见 `superpowers/specs/2026-09-26-p7-platform-diagnostics-design.md`） |
+| P7 | 本应用真实传感器诊断与自有本地 JSON 测试接收端已通过 CI 和真机基本验收；新位置工作台另待验收 |
 | GitHub CI | 仓库 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，目标分支 `master`；公开仓库写入须事先授权 |
 
 > 相关研究：[`DESIGN-injection-fusion.md`](DESIGN-injection-fusion.md) 记录定位注入机制调研；其中推测不代表实现结论。
@@ -57,7 +57,8 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 
 ## 3. 架构
 
-当前交付为独立 App，不包含系统级定位/传感器注入：
+以下为原 P0–P7 架构快照。新增的 `:app` 位置工作台（OSM 地图/搜索、历史、摇杆和独立 Mock Location 前台服务）与记录器和模拟服务隔离；设计和待验收边界见新规格：
+[`2026-09-27-position-workbench-design.md`](superpowers/specs/2026-09-27-position-workbench-design.md)。
 
 ```text
 :app (Android / Compose)
@@ -106,9 +107,9 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 | **P4 注入-A（历史设想，不在当前范围）** | 早期 Mock Location 研究，未实现 | 不作为独立 App 的发布门槛 | 不开展第三方应用检测绕过或兼容性验证 |
 | **P5 安全范围交付** | provenance-aware 本地事件协议、顺序/时间/计数器/路线校验、只读离线回放和 Android 私有模拟历史诊断 | 不提供系统级定位/传感器注入；不声明第三方兼容性或绕过检测 | sim-core JVM 单测、离线检查、CI lint/APK；规格见 `docs/superpowers/specs/2026-09-25-p5-safe-replay-design.md` |
 | **P6 硬化** | 记录生命周期状态持久化、原子关闭、严格真实导出资格、异常状态、自检、波形复核、参数预设和模拟历史诊断 | 代码与离线检查已完成；CI 编译/lint、真机多尺寸/后台流程、三次独立参考计数和 Google Play `specialUse` 评估仍待外部验收 | 离线结构检查、JVM/Python 测试；Android 编译/lint 交由 CI；规格见 `docs/superpowers/specs/2026-09-26-recording-lifecycle-export-design.md` 与 `docs/superpowers/specs/2026-09-26-p6-preflight-presets-design.md` |
-| **P7 设备诊断与自有接收端** | 本应用真实传感器时序诊断、用户主动导出诊断 JSON；共享应用内/独立安装的 JSON 事件测试接收端 | 独立包只读取用户选择的本地文件，没有第三方平台包或协议；不能推断其他应用读取结果，也未完成息屏/后台验证 | 离线结构检查和核心 JVM 测试；两包 Android 编译/lint 与真机需后续验证；范围见 `docs/superpowers/specs/2026-09-26-p7-platform-diagnostics-design.md` |
+| **P7 设备诊断与自有接收端** | 本应用真实传感器时序诊断、用户主动导出诊断 JSON；共享应用内/独立安装的 JSON 事件测试接收端 | 独立包只读取用户选择的本地文件，没有第三方平台包或协议；不能推断其他应用读取结果 | 离线结构检查、核心 JVM 测试、Android 编译/lint 和真机基本验收已完成；范围见 `docs/superpowers/specs/2026-09-26-p7-platform-diagnostics-design.md` |
 
-**当前交付范围**：P0–P3 构成独立记录与模拟应用，P5 是应用内只读诊断，P6 是生命周期与体验硬化；P7 包含设备诊断及本地 JSON 自有测试接收端（应用内与独立 APK），仍待 CI 和真机验收。P4 和历史 P7 软件融合设想仅作为研究笔记，不实现系统注入，也不承诺第三方兼容或检测绕过。
+**当前交付范围**：原 P0–P7 的记录、模拟、只读诊断与自有接收端已通过 CI 和基本真机验收；新增的位置工作台提供独立系统 Mock Location 和用户显式启动的最近一次已关闭模拟历史路线回放，不自动与 P5 本地回放协议连通，尚未完成 CI/设备验收。历史 P4 传感器注入与第三方兼容性设想不在范围内。
 
 ## 5. 验收标准（P1+P2，P0 另见实施记录）
 
@@ -122,7 +123,7 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 
 ## 6. 风险与明确的不做承诺
 
-- **不承诺**能通过任何特定校园跑 App 的检测。P4 和历史 P7 软件融合的系统注入研究不代表实现或兼容性承诺；P5 的本地回放及 P7 首期诊断也不产生第三方可见数据。
+- **不承诺**能通过任何特定校园跑 App 的检测。新增 Mock Location 只验证本机 Android test provider；不实现步频传感器注入、第三方通信或检测绕过。
 - 不保证任意区间都有可行解；按显式模型参数求交，并区分“模型配置冲突”和没有证据支持的生理结论。
 - 步频注入（IMU 层）需要 root；免 root 路线在传感器层面基本无解，这是平台限制而非实现问题。
 - 第三方代码与依赖的许可须在实际引入/分发前审查，不能仅凭“只参考机制”就保证没有许可义务；本次 P0 未复制 GoGoGo 业务代码。标枪定位的相关描述只是上游声明，未独立检查其源码、二进制或许可履行情况。

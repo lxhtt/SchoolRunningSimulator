@@ -15,6 +15,6 @@ RateMock is built with the following projects and services. This acknowledgement
 
 The repository-level Apache License 2.0 applies to RateMock-authored materials except where an individual file or component is identified as third-party. The Gradle Wrapper, workflow actions, and resolved dependencies retain their respective upstream licenses. Review the relevant notices before redistributing them; see [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
-No GoGoGo application source, assets, signing keys, or Baidu SDK are included in this P0 project. The separate injection research note records exploratory observations, not an implementation dependency or endorsement by any project discussed there.
+No GoGoGo application source, assets, signing keys, or Baidu SDK are included. The position workbench is an original RateMock implementation. It can request public OpenStreetMap raster tiles and Nominatim search at runtime; those services are optional, network-bound integrations and are not bundled SDKs. The separate injection research note records exploratory observations, not an implementation dependency or endorsement by any project discussed there.
 
 When adding or redistributing a third-party component, update the notices with its name, version, source, and verified license before release.
