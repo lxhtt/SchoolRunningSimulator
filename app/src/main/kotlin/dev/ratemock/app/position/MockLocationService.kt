@@ -9,12 +9,14 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.location.Criteria
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import dev.ratemock.app.MainActivity
 import dev.ratemock.app.R
@@ -39,6 +41,7 @@ class MockLocationService : Service() {
     private var routeIndex = 0
     private var routeStartedElapsedMs = 0L
     private var pauseBeganElapsedMs = 0L
+    private var routeWakeLock: PowerManager.WakeLock? = null
     private val ticker = object : Runnable {
         override fun run() {
             if (!active) return
@@ -95,11 +98,13 @@ class MockLocationService : Service() {
             ACTION_PAUSE -> if (active) {
                 paused = true
                 pauseBeganElapsedMs = SystemClock.elapsedRealtime()
+                releaseRouteWakeLock()
                 status("PAUSED")
             } else if (!loadingRoute) shutdown("INTERRUPTED")
             ACTION_RESUME -> if (active) {
                 if (paused && route != null) routeStartedElapsedMs += SystemClock.elapsedRealtime() - pauseBeganElapsedMs
                 paused = false
+                acquireRouteWakeLock()
                 status("RUNNING")
                 handler.removeCallbacks(ticker)
                 handler.post(ticker)
@@ -122,7 +127,7 @@ class MockLocationService : Service() {
         } else startForeground(NOTIFICATION_ID, notification())
         runCatching { manager.removeTestProvider(LocationManager.GPS_PROVIDER) }
         manager.addTestProvider(LocationManager.GPS_PROVIDER, false, true, false, false,
-            true, true, true, 1, 1)
+            true, true, true, Criteria.POWER_LOW, Criteria.ACCURACY_FINE)
         registered = true
         manager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true)
     }
@@ -153,6 +158,7 @@ class MockLocationService : Service() {
                     loadingRoute = false
                     active = true
                     paused = false
+                    acquireRouteWakeLock()
                     status("RUNNING")
                     handler.post(ticker)
                 }.onFailure { fail(it) }
@@ -195,7 +201,27 @@ class MockLocationService : Service() {
             .putLong(KEY_HEARTBEAT, System.currentTimeMillis()).apply()
     }
 
+    private fun acquireRouteWakeLock() {
+        val samples = route ?: return
+        val remainingMs = ((samples.last().elapsedSeconds * 1_000.0) -
+            (SystemClock.elapsedRealtime() - routeStartedElapsedMs)).toLong().coerceAtLeast(1_000L)
+        val lock = routeWakeLock ?: getSystemService(PowerManager::class.java).newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK, "dev.ratemock.app:mock-route"
+        ).also {
+            it.setReferenceCounted(false)
+            routeWakeLock = it
+        }
+        if (!lock.isHeld) lock.acquire(remainingMs + WAKE_LOCK_MARGIN_MS)
+    }
+
+    private fun releaseRouteWakeLock() {
+        routeWakeLock?.let { lock ->
+            if (lock.isHeld) lock.release()
+        }
+    }
+
     private fun cleanup() {
+        releaseRouteWakeLock()
         handler.removeCallbacks(ticker)
         loadingRoute = false
         loadGeneration++
@@ -259,6 +285,6 @@ class MockLocationService : Service() {
         const val KEY_ERROR = "error"
         const val KEY_HEARTBEAT = "heartbeat"
         private const val CHANNEL = "ratemock-mock-location"
-        private const val NOTIFICATION_ID = 1003
+        private const val WAKE_LOCK_MARGIN_MS = 60_000L
     }
 }

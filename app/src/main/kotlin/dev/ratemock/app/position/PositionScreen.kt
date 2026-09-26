@@ -116,7 +116,9 @@ fun PositionScreen(
         }
     }
 
-    val editedPoint = runCatching { PositionPoint(latitudeText.toDouble(), longitudeText.toDouble(), altitudeText.toDouble()) }.getOrNull()
+    val editedPoint = runCatching {
+        PositionPoint(parseCoordinate(latitudeText), parseCoordinate(longitudeText), parseCoordinate(altitudeText))
+    }.getOrNull()
 
     fun applyPoint(candidate: PositionPoint) {
         point = candidate
@@ -137,6 +139,7 @@ fun PositionScreen(
                 Text("地图、历史和模拟定位服务独立于真实记录与模拟跑台。", style = MaterialTheme.typography.bodyMedium)
             }
             item {
+                Text("地图路线仅显示本次选点和摇杆轨迹；回放进度显示在服务状态中。", style = MaterialTheme.typography.bodySmall)
                 CoordinateMap(point, route, onTap = { lat, lon ->
                     runCatching { applyPoint(PositionPoint(lat, lon, point?.altitude ?: 0.0)) }
                 })
@@ -257,6 +260,8 @@ private fun NumberField(label: String, value: String, onValueChange: (String) ->
     OutlinedTextField(value, onValueChange, label = { Text(label) }, modifier = modifier, singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
 }
+
+private fun parseCoordinate(value: String): Double = value.trim().replace(',', '.').toDouble()
 
 private data class TileImage(val bitmap: android.graphics.Bitmap, val x: Int, val y: Int)
 
