@@ -1,21 +1,15 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
 plugins {
-    alias(libs.plugins.android.application)
+    alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.compose)
 }
 
 android {
-    namespace = "dev.ratemock.app"
+    namespace = "dev.ratemock.receiverui"
     compileSdk = 36
     buildToolsVersion = "36.0.0"
 
     defaultConfig {
-        applicationId = "dev.ratemock.app"
         minSdk = 26
-        targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-p0"
     }
 
     compileOptions {
@@ -23,24 +17,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    buildFeatures {
-        compose = true
-    }
-
-    lint {
-        abortOnError = true
-    }
+    buildFeatures { compose = true }
 }
 
 kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
-    }
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
 dependencies {
-    implementation(project(":receiver-ui"))
-    // Substituted with the independent local build by settings.includeBuild.
     implementation("dev.ratemock:sim-core:0.1.0")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

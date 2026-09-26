@@ -1,0 +1,17 @@
+<resources>
+    <string name="receiver_app_name">RateMock 测试接收端</string>
+    <string name="receiver_title">自有测试接收端</string>
+    <string name="receiver_description">只读取用户主动选择的本地 RateMock 事件 JSON，不连接其他应用或平台。</string>
+    <string name="receiver_choose_file">选择事件 JSON</string>
+    <string name="receiver_sample">加载内置样本</string>
+    <string name="receiver_loading">正在读取事件 JSON…</string>
+    <string name="receiver_rejected">输入被拒绝</string>
+    <string name="receiver_invalid">校验未通过</string>
+    <string name="receiver_warning">接收完成，有警告</string>
+    <string name="receiver_complete">接收完成</string>
+    <string name="receiver_status">状态：%1$s</string>
+    <string name="receiver_summary">事件：%1$d · 时长：%2$.1f 秒</string>
+    <string name="receiver_issues">问题：%1$d</string>
+    <string name="receiver_issue">%1$s: %2$s (sequence %3$d)</string>
+    <string name="receiver_limits">输入限制：JSON 最大 1 MiB，最多 10,000 个事件。位置使用本地 east/north 米，不是 GPS 坐标。</string>
+</resources>

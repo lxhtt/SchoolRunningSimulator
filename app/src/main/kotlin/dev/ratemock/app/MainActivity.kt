@@ -6,6 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import dev.ratemock.core.export.RealRunExport
+import dev.ratemock.core.export.RecordingExportCandidate
+import dev.ratemock.core.export.RecordingExportPolicy
+import dev.ratemock.core.export.RecordingState
 import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
@@ -37,7 +40,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,6 +65,7 @@ import dev.ratemock.app.recording.RecorderService
 import dev.ratemock.app.simulation.SimulatorScreen
 import dev.ratemock.app.simulation.SimulatorService
 import dev.ratemock.app.ui.RateMockTheme
+import dev.ratemock.receiverui.ReplayReceiverScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -78,19 +82,12 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
                     Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            TabRow(selectedTabIndex = selectedTab, modifier = Modifier.fillMaxWidth()) {
-                                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(stringResource(R.string.sim_tab)) })
-                                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(stringResource(R.string.record_tab)) })
-                            }
-                            TextButton(onClick = { openBatterySettings() }, modifier = Modifier.align(Alignment.End)) { Text(stringResource(R.string.battery_settings)) }
+                        ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp, modifier = Modifier.fillMaxWidth()) {
+                            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(stringResource(R.string.sim_tab)) })
+                            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(stringResource(R.string.record_tab)) })
+                            Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text(stringResource(R.string.diagnostic_tab)) })
+                            Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, text = { Text(stringResource(R.string.receiver_tab)) })
                         }
-                        Text(
-                            stringResource(R.string.battery_guidance),
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                         Box(modifier = Modifier.weight(1f)) {
                             if (selectedTab == 0) {
                                 SimulatorScreen(
@@ -107,9 +104,10 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onRequestNotification = { requestSimulationNotification() },
                                 )
-                            } else {
+                            } else if (selectedTab == 1) {
                                 RecorderScreen(
                                     onRequestPermissions = { requestRecordingPermissions() },
+                                    onOpenBatterySettings = { openBatterySettings() },
                                     onStartRecording = { cadence, voiceEnabled ->
                                         val permissionsGranted = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
                                             android.content.pm.PackageManager.PERMISSION_GRANTED ||
@@ -128,21 +126,22 @@ class MainActivity : ComponentActivity() {
                                         }.isSuccess
                                     },
                                     onStopRecording = {
-                                        startService(Intent(this@MainActivity, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
+                                        runCatching { startService(Intent(this@MainActivity, RecorderService::class.java).setAction(RecorderService.ACTION_STOP)) }.isSuccess
                                     },
                                 )
+                            } else if (selectedTab == 2) {
+                                DiagnosticScreen(onRequestPermissions = { requestRecordingPermissions() })
+                            } else {
+                                ReplayReceiverScreen()
                             }
                         }
+
                     }
                 }
             }
         }
-        val guidance = getSharedPreferences(BATTERY_PREFS, MODE_PRIVATE)
-        if (!guidance.getBoolean(KEY_BATTERY_GUIDANCE_SHOWN, false)) {
-            guidance.edit().putBoolean(KEY_BATTERY_GUIDANCE_SHOWN, true).apply()
-            openBatterySettings()
-        }
     }
+
 
     private fun openBatterySettings() {
         try {
@@ -156,10 +155,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private companion object {
-        const val BATTERY_PREFS = "battery_guidance"
-        const val KEY_BATTERY_GUIDANCE_SHOWN = "shown"
-    }
 
     private fun startSimulation(speed: Double, duration: Double, cadence: Double?, fatigue: Double): Boolean = runCatching {
         val intent = Intent(this, SimulatorService::class.java)
@@ -200,13 +195,26 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun RecorderScreen(
     onRequestPermissions: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
     onStartRecording: (Double, Boolean) -> Boolean,
-    onStopRecording: () -> Unit,
+    onStopRecording: () -> Boolean,
 ) {
     val context = LocalContext.current
+    var snapshot by remember { mutableStateOf(readRecorderSnapshot(context, verifyExport = false, readFile = false)) }
     var targetCadence by rememberSaveable { mutableFloatStateOf(170f) }
     var voiceEnabled by rememberSaveable { mutableStateOf(false) }
     var startFailed by rememberSaveable { mutableStateOf(false) }
+    var stopFailed by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(context) {
+        while (true) {
+            snapshot = withContext(Dispatchers.IO) { readRecorderSnapshot(context, verifyExport = true, readFile = true) }
+            delay(1_000)
+        }
+    }
+    LaunchedEffect(snapshot.state) {
+        if (snapshot.state == RecordingState.ACTIVE) startFailed = false
+        if (snapshot.state == RecordingState.STOPPED) stopFailed = false
+    }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -240,16 +248,25 @@ private fun RecorderScreen(
                             Text(stringResource(R.string.real_voice_toggle), modifier = Modifier.weight(1f))
                             Switch(checked = voiceEnabled, onCheckedChange = { voiceEnabled = it })
                         }
-                        Button(onClick = { startFailed = !onStartRecording(targetCadence.toDouble(), voiceEnabled) }, modifier = Modifier.fillMaxWidth()) {
+                        Button(onClick = { startFailed = !onStartRecording(targetCadence.toDouble(), voiceEnabled) },
+                            enabled = !snapshot.active, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.recorder_start))
                         }
                         if (startFailed) Text(stringResource(R.string.real_start_error), color = MaterialTheme.colorScheme.error)
-                        OutlinedButton(onClick = onStopRecording, modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = { stopFailed = !onStopRecording() },
+                            enabled = snapshot.state == RecordingState.ACTIVE, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.recorder_stop))
                         }
+                        if (stopFailed) Text(stringResource(R.string.recorder_stop_error), color = MaterialTheme.colorScheme.error)
                     }
                 }
-                RecorderPanel(context)
+                RecorderPanel(context, snapshot)
+                TextButton(onClick = onOpenBatterySettings) { Text(stringResource(R.string.battery_settings)) }
+                Text(
+                    stringResource(R.string.battery_guidance),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 Text(
                     stringResource(R.string.privacy_note),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -262,6 +279,9 @@ private fun RecorderScreen(
 
 private data class RecorderUiSnapshot(
     val active: Boolean,
+    val state: RecordingState,
+    val canExport: Boolean,
+    val error: String?,
     val fileName: String,
     val sampleCount: Int,
     val freshFixes: Int,
@@ -279,15 +299,18 @@ private data class RecorderUiSnapshot(
 )
 
 @Composable
-private fun RecorderPanel(context: Context) {
-    var snapshot by remember { mutableStateOf(readRecorderSnapshot(context)) }
+private fun RecorderPanel(context: Context, snapshot: RecorderUiSnapshot) {
     var exportMenu by remember { mutableStateOf(false) }
     var exportError by remember { mutableStateOf<String?>(null) }
+    var exportWriting by remember { mutableStateOf(false) }
+    var exportSucceeded by remember { mutableStateOf(false) }
     var exportFile by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     fun save(uri: Uri?, format: String) {
         if (uri == null) return
         scope.launch {
+            exportWriting = true
+            exportSucceeded = false
             exportError = withContext(Dispatchers.IO) {
                 runCatching<String?> {
                     val fileName = exportFile ?: error("No recording selected")
@@ -303,23 +326,24 @@ private fun RecorderPanel(context: Context) {
                     null
                 }.getOrElse { context.getString(R.string.real_export_error) }
             }
+            exportWriting = false
+            exportSucceeded = exportError == null
         }
     }
     val exportCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { save(it, "csv") }
     val exportJson = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { save(it, "json") }
     val exportGpx = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { save(it, "gpx") }
-    LaunchedEffect(context) {
-        while (true) {
-            snapshot = withContext(Dispatchers.IO) { readRecorderSnapshot(context) }
-            delay(1_000)
-        }
-    }
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
         Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(stringResource(R.string.recorder_status_title), style = MaterialTheme.typography.titleMedium)
             Text(
-                if (snapshot.active) stringResource(R.string.recorder_status_active)
-                else stringResource(R.string.recorder_status_inactive),
+                stringResource(when (snapshot.state) {
+                    RecordingState.ACTIVE -> R.string.recorder_status_active
+                    RecordingState.STOPPING -> R.string.recorder_status_stopping
+                    RecordingState.STOPPED -> R.string.recorder_status_stopped
+                    RecordingState.ERROR -> R.string.recorder_status_error
+                    else -> R.string.recorder_status_inactive
+                }),
                 color = if (snapshot.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.headlineSmall,
             )
@@ -352,6 +376,10 @@ private fun RecorderPanel(context: Context) {
                     ?: stringResource(R.string.recorder_no_heartbeat),
             )
             Text(snapshot.summary)
+            val recorderError = snapshot.error
+            if (recorderError != null) {
+                Text(stringResource(R.string.recorder_error, recorderError), color = MaterialTheme.colorScheme.error)
+            }
             Text(stringResource(R.string.real_provenance, snapshot.freshFixes))
             Text(stringResource(R.string.real_voice_status, when (snapshot.voiceStatus) {
                 "ready" -> stringResource(R.string.real_voice_ready)
@@ -361,7 +389,7 @@ private fun RecorderPanel(context: Context) {
             }))
             Box {
                 OutlinedButton(
-                    enabled = !snapshot.active && snapshot.sampleCount > 0,
+                    enabled = snapshot.canExport && !exportWriting,
                     onClick = { exportMenu = true },
                 ) { Text(stringResource(R.string.real_export)) }
                 DropdownMenu(expanded = exportMenu, onDismissRequest = { exportMenu = false }) {
@@ -389,6 +417,8 @@ private fun RecorderPanel(context: Context) {
                 }
             }
             exportError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (exportWriting) Text(stringResource(R.string.real_export_writing), color = MaterialTheme.colorScheme.primary)
+            if (exportSucceeded) Text(stringResource(R.string.real_export_success), color = MaterialTheme.colorScheme.primary)
             Text(stringResource(R.string.recorder_latest), style = MaterialTheme.typography.labelLarge)
             Text(snapshot.latest, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
             Text(stringResource(R.string.recorder_log_title), style = MaterialTheme.typography.labelLarge)
@@ -404,23 +434,51 @@ private fun RecorderPanel(context: Context) {
 }
 
 private fun loadStoppedRecording(context: Context, fileName: String): RealRunExport.Recording {
-    require(fileName.endsWith(".csv") && fileName.matches(Regex("recording-[0-9]+\\.csv")))
     val preferences = context.getSharedPreferences("recorder_status", Context.MODE_PRIVATE)
-    require(!preferences.getBoolean(RecorderService.KEY_ACTIVE, false) ||
-        System.currentTimeMillis() - preferences.getLong(RecorderService.KEY_HEARTBEAT_MS, 0L) >= 3_000L) { "Recording is active" }
-    val file = File(File(context.filesDir, "recordings"), fileName)
-    require(file.isFile && file.parentFile == File(context.filesDir, "recordings")) { "Recording file unavailable" }
-    return RealRunExport.parse(file.readText())
+    val state = runCatching {
+        RecordingState.valueOf(preferences.getString(RecorderService.KEY_STATE, RecordingState.IDLE.name)!!)
+    }.getOrDefault(RecordingState.ERROR)
+    val closedFileName = preferences.getString(RecorderService.KEY_CLOSED_FILE_NAME, null)
+    val directory = File(context.filesDir, "recordings").canonicalFile
+    val file = File(directory, fileName).canonicalFile
+    val before = file.runCatching { Pair(length(), lastModified()) }.getOrNull()
+    val content = file.takeIf { it.parentFile == directory && it.isFile }?.runCatching { readText() }?.getOrNull()
+    val recording = content?.let { runCatching { RealRunExport.parse(it) }.getOrNull() }
+    val after = file.runCatching { Pair(length(), lastModified()) }.getOrNull()
+    val candidate = RecordingExportCandidate(
+        state = state,
+        closedFileName = closedFileName,
+        requestedFileName = fileName,
+        fileNameMatches = closedFileName == fileName,
+        fileIsInsideRecordings = file.parentFile == directory && file.name.matches(Regex("recording-[0-9]+\\.csv")),
+        fileSnapshotUnchanged = before != null && before == after,
+        parsedSuccessfully = recording != null,
+    )
+    require(RecordingExportPolicy.decide(candidate).allowed) { "Recording is not a valid closed export candidate" }
+    val stateAfterRead = runCatching {
+        RecordingState.valueOf(preferences.getString(RecorderService.KEY_STATE, RecordingState.IDLE.name)!!)
+    }.getOrDefault(RecordingState.ERROR)
+    require(stateAfterRead == RecordingState.STOPPED &&
+        preferences.getString(RecorderService.KEY_CLOSED_FILE_NAME, null) == fileName &&
+        file.runCatching { Pair(length(), lastModified()) }.getOrNull() == after) { "Recording changed during export" }
+    return requireNotNull(recording)
 }
 
-private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
-    val directory = File(context.filesDir, "recordings")
-    val file = directory.listFiles { candidate -> candidate.extension == "csv" }
-        ?.maxByOrNull { it.lastModified() }
+private fun readRecorderSnapshot(context: Context, verifyExport: Boolean, readFile: Boolean): RecorderUiSnapshot {
     val preferences = context.getSharedPreferences("recorder_status", Context.MODE_PRIVATE)
+    val state = runCatching {
+        RecordingState.valueOf(preferences.getString(RecorderService.KEY_STATE, RecordingState.IDLE.name)!!)
+    }.getOrDefault(RecordingState.ERROR)
+    val active = state == RecordingState.ACTIVE || state == RecordingState.STOPPING
+    val selectedName = when (state) {
+        RecordingState.STOPPED -> preferences.getString(RecorderService.KEY_CLOSED_FILE_NAME, null)
+        RecordingState.ACTIVE, RecordingState.STOPPING -> preferences.getString(RecorderService.KEY_FILE_NAME, null)
+        else -> null
+    }
+    val directory = File(context.filesDir, "recordings").canonicalFile
+    val file = selectedName?.let { File(directory, it).canonicalFile }
+        ?.takeIf { it.parentFile == directory && it.isFile }
     val heartbeat = preferences.getLong(RecorderService.KEY_HEARTBEAT_MS, 0L)
-    val active = preferences.getBoolean(RecorderService.KEY_ACTIVE, false) &&
-        System.currentTimeMillis() - heartbeat in 0L..2_999L
     val lastStepNs = preferences.getLong(RecorderService.KEY_LAST_STEP_NS, 0L)
     val lastFixNs = preferences.getLong(RecorderService.KEY_LOCATION_FIX_NS, 0L)
     val nowNs = SystemClock.elapsedRealtimeNanos()
@@ -432,7 +490,7 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
     var lastStep: Double? = null
     var latest = context.getString(R.string.recorder_no_data)
     val recent = ArrayDeque<String>()
-    file?.runCatching {
+    if (readFile) file?.runCatching {
         bufferedReader().useLines { lines ->
             lines.drop(1).forEach { line ->
                 if (line.isBlank()) return@forEach
@@ -455,6 +513,10 @@ private fun readRecorderSnapshot(context: Context): RecorderUiSnapshot {
     }
     return RecorderUiSnapshot(
         active = active,
+        state = state,
+        canExport = verifyExport && state == RecordingState.STOPPED && file != null &&
+            runCatching { loadStoppedRecording(context, file.name) }.isSuccess,
+        error = preferences.getString(RecorderService.KEY_ERROR, null),
         fileName = file?.name ?: context.getString(R.string.recorder_no_file),
         sampleCount = sampleCount,
         freshFixes = freshFixes,

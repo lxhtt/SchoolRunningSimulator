@@ -24,7 +24,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "RateMock"
-include(":app")
-
-// A separate settings file keeps SDK-free core tests independent from AGP.
+include(":app", ":receiver-ui", ":receiver")
 includeBuild("sim-core")

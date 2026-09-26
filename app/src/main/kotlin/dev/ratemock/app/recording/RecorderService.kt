@@ -29,6 +29,7 @@ import dev.ratemock.core.truth.StepCounterCheck
 import dev.ratemock.core.truth.RunPromptDecider
 import dev.ratemock.core.truth.PromptInput
 import dev.ratemock.core.truth.RunPrompt
+import dev.ratemock.core.export.RecordingState
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -39,6 +40,7 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     private lateinit var locationManager: LocationManager
     private lateinit var sensorManager: SensorManager
     private var writer: BufferedWriter? = null
+    @Volatile private var writeFailure: Throwable? = null
     private var latestStepCounter: Float? = null
     private var latestLocation: Location? = null
     private var recordingFile: File? = null
@@ -65,11 +67,14 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
     }
     private val heartbeat = object : Runnable {
         override fun run() {
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putBoolean(KEY_ACTIVE, true)
-                .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
-                .apply()
-            heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
+            val preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
+            if (preferences.getString(KEY_STATE, RecordingState.IDLE.name) == RecordingState.ACTIVE.name) {
+                preferences.edit()
+                    .putBoolean(KEY_ACTIVE, true)
+                    .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
+                    .apply()
+                heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
+            }
         }
     }
 
@@ -79,6 +84,16 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         sensorManager = getSystemService(SensorManager::class.java)
         createNotificationChannel()
         callbackThread.start()
+        val persistedState = getSharedPreferences(PREFS, MODE_PRIVATE)
+            .getString(KEY_STATE, RecordingState.IDLE.name)
+        if (persistedState == RecordingState.ACTIVE.name || persistedState == RecordingState.STOPPING.name) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_STATE, RecordingState.ERROR.name)
+                .putString(KEY_ERROR, "Recording service ended before the file was closed")
+                .putBoolean(KEY_ACTIVE, false)
+                .putString(KEY_CLOSED_FILE_NAME, null)
+                .apply()
+        }
         callbackHandler = Handler(callbackThread.looper)
     }
 
@@ -89,12 +104,23 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
             return START_NOT_STICKY
         }
         if (intent?.action == ACTION_START) startRecording(intent)
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startRecording(intent: Intent? = null) {
         if (writer != null) return
-        if (!hasLocationPermission()) return
+        writeFailure = null
+        if (!hasLocationPermission()) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_STATE, RecordingState.ERROR.name)
+                .putString(KEY_ERROR, "Location permission is required")
+                .putBoolean(KEY_ACTIVE, false)
+                .putString(KEY_CLOSED_FILE_NAME, null)
+                .putLong(KEY_STATUS_UPDATED_MS, System.currentTimeMillis())
+                .apply()
+            stopSelf()
+            return
+        }
         targetCadenceSpm = intent?.getDoubleExtra(EXTRA_TARGET_CADENCE_SPM, 170.0)?.takeIf { it.isFinite() && it in 90.0..210.0 } ?: 170.0
         voiceEnabled = intent?.getBooleanExtra(EXTRA_VOICE_ENABLED, false) == true
         promptDecider.reset()
@@ -132,37 +158,76 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
             .putLong(KEY_LAST_COUNTER_NS, 0L)
             .apply()
         val notification = notification("Recording GPS and step counter")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (error: RuntimeException) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_STATE, RecordingState.ERROR.name)
+                .putString(KEY_ERROR, error.message ?: error.javaClass.simpleName)
+                .putBoolean(KEY_ACTIVE, false)
+                .putLong(KEY_STATUS_UPDATED_MS, System.currentTimeMillis())
+                .apply()
+            stopSelf()
+            return
         }
         val directory = File(filesDir, "recordings").apply { mkdirs() }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putString(KEY_STATE, RecordingState.IDLE.name)
+            .putString(KEY_ERROR, null)
+            .putString(KEY_CLOSED_FILE_NAME, null)
+            .putBoolean(KEY_ACTIVE, false)
+            .apply()
         recordingFile = File(directory, "recording-${System.currentTimeMillis()}.csv")
         recordingStartedAtMs = System.currentTimeMillis()
-        writer = BufferedWriter(FileWriter(recordingFile, false)).also {
-            it.appendLine("timestamp_utc,elapsed_s,latitude_deg,longitude_deg,altitude_m,horizontal_accuracy_m,speed_mps,step_counter_total,location_age_s")
-            it.flush()
+        writer = runCatching {
+            BufferedWriter(FileWriter(recordingFile, false)).also { output ->
+                try {
+                    output.appendLine("timestamp_utc,elapsed_s,latitude_deg,longitude_deg,altitude_m,horizontal_accuracy_m,speed_mps,step_counter_total,location_age_s")
+                    output.flush()
+                } catch (error: Throwable) {
+                    runCatching { output.close() }
+                    throw error
+                }
+            }
+        }.getOrElse {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_STATE, RecordingState.ERROR.name)
+                .putString(KEY_ERROR, it.message ?: "Unable to create recording")
+                .putString(KEY_FILE_NAME, recordingFile?.name)
+                .putBoolean(KEY_ACTIVE, false)
+                .apply()
+            recordingFile = null
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
         }
+        val createdFile = recordingFile ?: return
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-            .putString(KEY_FILE_NAME, recordingFile!!.name)
+            .putString(KEY_FILE_NAME, createdFile.name)
+            .putString(KEY_STATE, RecordingState.ACTIVE.name)
+            .putString(KEY_ERROR, null)
+            .putString(KEY_CLOSED_FILE_NAME, null)
             .putBoolean(KEY_ACTIVE, true)
             .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
             .apply()
         heartbeatHandler.post(heartbeat)
         callbackHandler.post(sampleTicker)
-        val stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-        if (stepSensor != null && hasActivityPermission()) {
-            sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_NORMAL, callbackHandler)
-        }
-        val detector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-            .putString(KEY_CADENCE_SOURCE, if (detector == null || !hasActivityPermission()) "unavailable" else "warming_up")
-            .apply()
-        if (detector != null && hasActivityPermission()) {
-            sensorManager.registerListener(this, detector, SensorManager.SENSOR_DELAY_NORMAL, callbackHandler)
-        }
         try {
+            val stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+            if (stepSensor != null && hasActivityPermission()) {
+                sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_NORMAL, callbackHandler)
+            }
+            val detector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_CADENCE_SOURCE, if (detector == null || !hasActivityPermission()) "unavailable" else "warming_up")
+                .apply()
+            if (detector != null && hasActivityPermission()) {
+                sensorManager.registerListener(this, detector, SensorManager.SENSOR_DELAY_NORMAL, callbackHandler)
+            }
             locationManager.requestLocationUpdates(
                 LocationManager.GPS_PROVIDER,
                 LOCATION_INTERVAL_MS,
@@ -170,19 +235,50 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
                 this,
                 callbackThread.looper,
             )
-        } catch (_: SecurityException) {
-            stopRecording()
+        } catch (error: SecurityException) {
+            stopRecording(error)
+            stopSelf()
+        } catch (error: RuntimeException) {
+            stopRecording(error)
+            stopSelf()
         }
     }
 
-    private fun stopRecording() {
-        runCatching { locationManager.removeUpdates(this) }
+    private fun stopRecording(failure: Throwable? = null) {
+        val preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val fileBeingClosed = recordingFile
+        if (writer == null && fileBeingClosed == null) {
+            val state = preferences.getString(KEY_STATE, RecordingState.IDLE.name)
+            if (state != RecordingState.STOPPED.name && state != RecordingState.ERROR.name) {
+                preferences.edit()
+                    .putString(KEY_STATE, RecordingState.IDLE.name)
+                    .putBoolean(KEY_ACTIVE, false)
+                    .apply()
+            }
+            return
+        }
+        preferences.edit()
+            .putString(KEY_STATE, RecordingState.STOPPING.name)
+            .putBoolean(KEY_ACTIVE, false)
+            .putLong(KEY_STATUS_UPDATED_MS, System.currentTimeMillis())
+            .apply()
+        heartbeatHandler.removeCallbacks(heartbeat)
+        var closeError: Throwable? = failure
+        runCatching { locationManager.removeUpdates(this) }.onFailure { closeError = it }
         callbackHandler.removeCallbacks(sampleTicker)
-        sensorManager.unregisterListener(this)
+        runCatching { sensorManager.unregisterListener(this) }.onFailure { closeError = it }
         synchronized(writerLock) {
-            writer?.flush()
-            writer?.close()
+            runCatching {
+                writer?.let { output ->
+                    try {
+                        output.flush()
+                    } finally {
+                        output.close()
+                    }
+                }
+            }.onFailure { closeError = it }
             writer = null
+            if (closeError == null) closeError = writeFailure
         }
         latestStepCounter = null
         latestLocation = null
@@ -196,10 +292,14 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_VOICE_STATUS, "disabled").apply()
         recordingFile = null
         recordingStartedAtMs = 0L
-        heartbeatHandler.removeCallbacks(heartbeat)
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+        val finalState = if (closeError == null && fileBeingClosed != null) RecordingState.STOPPED else RecordingState.ERROR
+        preferences.edit()
+            .putString(KEY_STATE, finalState.name)
+            .putString(KEY_CLOSED_FILE_NAME, if (finalState == RecordingState.STOPPED) fileBeingClosed?.name else null)
+            .putString(KEY_ERROR, closeError?.message)
             .putBoolean(KEY_ACTIVE, false)
             .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
+            .putLong(KEY_STATUS_UPDATED_MS, System.currentTimeMillis())
             .apply()
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
@@ -230,8 +330,18 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         ).joinToString(",")
         synchronized(writerLock) {
             val out = writer ?: return
-            out.appendLine(row)
-            out.flush()
+            try {
+                out.appendLine(row)
+                out.flush()
+            } catch (error: Exception) {
+                writeFailure = error
+                heartbeatHandler.post {
+                    if (writer === out) {
+                        stopRecording(error)
+                        stopSelf()
+                    }
+                }
+            }
         }
     }
 
@@ -289,6 +399,9 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
 
     override fun onDestroy() {
         stopRecording()
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+        textToSpeech = null
         callbackThread.quitSafely()
         super.onDestroy()
     }
@@ -334,6 +447,10 @@ class RecorderService : Service(), LocationListener, SensorEventListener {
         const val EXTRA_VOICE_ENABLED = "voice_enabled"
         const val KEY_VOICE_STATUS = "voice_status"
         const val KEY_FILE_NAME = "file_name"
+        const val KEY_STATE = "state"
+        const val KEY_CLOSED_FILE_NAME = "closed_file_name"
+        const val KEY_STATUS_UPDATED_MS = "status_updated_ms"
+        const val KEY_ERROR = "error"
         const val KEY_TARGET_CADENCE_SPM = "target_cadence_spm"
         const val KEY_CADENCE_SPM = "cadence_spm"
         const val KEY_CADENCE_AVAILABLE = "cadence_available"

@@ -106,7 +106,10 @@ jobs:
       - name: Create APK checksum
         working-directory: app/build/outputs/apk/debug
         run: sha256sum app-debug.apk > SHA256SUMS
-      - name: Upload debug APK and checksum
+      - name: Create receiver APK checksum
+        working-directory: receiver/build/outputs/apk/debug
+        run: sha256sum receiver-debug.apk > SHA256SUMS
+      - name: Upload main debug APK and checksum
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ratemock-debug-${{ github.run_number }}
@@ -115,11 +118,23 @@ jobs:
             app/build/outputs/apk/debug/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
+      - name: Upload receiver debug APK and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ratemock-receiver-debug-${{ github.run_number }}
+          path: |
+            receiver/build/outputs/apk/debug/receiver-debug.apk
+            receiver/build/outputs/apk/debug/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload lint reports
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-lint-reports
-          path: app/build/reports/lint-results-debug.*
+          path: |
+            app/build/reports/lint-results-debug.*
+            receiver-ui/build/reports/lint-results-debug.*
+            receiver/build/reports/lint-results-debug.*
           if-no-files-found: warn
           retention-days: 7

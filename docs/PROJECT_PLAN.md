@@ -1,26 +1,26 @@
 # 校园跑步频模拟器 — 项目计划
 
-> 状态：P0–P1 源码、S7→S6 桥接、云端构建和 JVM/Python 验证已完成；S7 连续记录已真机验证。设备 ROM 的息屏电源管理限制已记录，不能泛化为所有 Android 设备行为。
-> 当前实现状态以 `docs/DESIGN-p1-sim-core.md` 和最近 GitHub Actions run 为准。
+> 状态：P0–P1 源码、S7→S6 桥接、云端构建和 JVM/Python 验证已完成；P2 模拟跑台、P3 实跑辅助、P5 本地安全回放和 P6 生命周期/导出硬化已实现。设备 ROM 的息屏电源管理限制已记录，不能泛化为所有 Android 设备行为。
+> 当前实现状态以最近 GitHub Actions run、`docs/superpowers/specs/2026-09-26-recording-lifecycle-export-design.md` 和 `docs/superpowers/specs/2026-09-26-p6-preflight-presets-design.md` 为准。
 
 ## 0. 一句话定义
 
-一个 Android 应用：由用户给出**速度区间 + 步频区间**，结合可校准的步态模型与 GPS 观测模型，生成可解释、可重复校验的仿真数据。先交付内置仿真跑台，再扩展真实跑步辅助；定位通道与软件融合保留为后续独立阶段，不作为 P0 的交付内容。
+一个独立 Android 应用：由用户给出速度与步频目标，在应用内生成可解释、可复核的模拟历史，同时提供独立的真实跑步记录与显式导出。物理内核保持纯 Kotlin/JVM；系统级定位/传感器注入不属于当前交付。
 
 ## 1. 已确认的需求边界
 
 | 维度 | 结论 |
 |---|---|
 | 形态 | A. 独立 App，真实跑（不依赖目标 App） |
-| 注入 | 当前不实现系统级 Mock Location 或 root + Xposed/LSPosed 注入；保留纯本地协议与诊断回放，真实记录和模拟数据分离 |
+| 注入 | 不实现系统级 Mock Location 或 root + Xposed/LSPosed 注入；仅有纯本地事件协议与只读诊断回放，真实记录和模拟数据分离 |
 | 首版 | **内置仿真跑台**（In-app Simulator） |
 | 构建 | **本地不装 Android SDK**，APK 走 CI（详见 §4.0） |
-| P7 | **软件融合**：不融合进程，融合机制（详见 `DESIGN-injection-fusion.md`） |
+| P7 | 本应用真实传感器诊断与自有本地 JSON 测试接收端已接入；独立接收 APK 与主 APK 的 CI/真机验收未完成（见 `superpowers/specs/2026-09-26-p7-platform-diagnostics-design.md`） |
 | GitHub CI | 仓库 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，目标分支 `master`；公开仓库写入须事先授权 |
 
 > 相关研究：[`DESIGN-injection-fusion.md`](DESIGN-injection-fusion.md) 记录定位注入机制调研；其中推测不代表实现结论。
 
-由此推出的架构原则：**物理内核与注入/消费层彻底解耦**。内核是纯 Kotlin、零 Android 依赖、可 JVM 单测；注入只是它的下游消费者之一。这样"两种注入都要"不会污染核心模型，也不会让算法被 Android 生命周期绑架。
+由此推出的架构原则：**物理内核与 Android 界面/记录服务解耦**。内核是纯 Kotlin、零 Android 依赖、可 JVM 单测；Android 层只消费其计算结果及导出策略，不能把模拟输出伪装成真实观测。
 
 ## 2. 核心模型
 
@@ -57,43 +57,22 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 
 ## 3. 架构
 
-以下是后续目标架构；P0 实际只有 Android 验证页与独立 JVM 内核，未创建地图/传感器/注入模块。
+当前交付为独立 App，不包含系统级定位/传感器注入：
 
-```
-┌───────────────────────────────────────────────────────────┐
-│ :app  (Android: Compose + MapLibre + MPAndroidChart)      │
-│   InAppSimulator · 曲线仪表盘 · 轨迹地图 · 语音引导        │
-└───────────────────────┬───────────────────────────────────┘
-                        │ 消费
-┌───────────────────────▼───────────────────────────────────┐
-│ :sim-core  纯 Kotlin / 零 Android 依赖 / JVM 可测           │
-│                                                           │
-│  RunPlan ──▶ FeasibilitySolver  ← 用户区间                 │
-│                 │                                         │
-│                 ▼                                         │
-│  SpeedPlanner (距离/时长/变速/冲刺)                         │
-│                 │                                         │
-│                 ▼                                         │
-│  GaitEngine ── CadenceModel + StrideModel + FatigueModel   │
-│                 │       + TerrainModel                     │
-│                 ▼                                         │
-│  StepEvent 流 (t, x, y, v, cadence, stride, gct, hr)       │
-│                 │                                         │
-│      ┌──────────┼───────────────┐                         │
-│      ▼          ▼               ▼                         │
-│  GpsStream  ImuSynthesizer  StatsReporter                 │
-│  (噪声/精度) (加速度波形)    (统计+PNG/CSV/GPX/JSON)       │
-└───────────────────────┬───────────────────────────────────┘
-                        │ 注入（后续阶段）
-      ┌─────────────────┴──────────────────┐
-      ▼                                    ▼
- MockLocationSink                    XposedModule
- (addTestProvider, 免 root)          (定位 + 加速度计 + 步数)
- ↑ 参数与机制取自影梭 ServiceGo              ↑ 影梭完全未覆盖
- (已验证的 provider 参数常量)                (本项目核心价值所在)
+```text
+:app (Android / Compose)
+  ├─ 真实记录前台服务 → 私有 recordings/ → 停止并关闭 → 严格解析 → 用户选择导出目标
+  ├─ 应用内模拟前台服务 → 私有 simulations/ → 波形复核 / 只读诊断 / 显式导出
+  └─ 测试接收页 → 共享 :receiver-ui
+:receiver (独立安装的测试 App) → 共享 :receiver-ui
+:receiver-ui → 本地 JSON 文档选择 / 只读校验 / 结果展示
+:sim-core (纯 Kotlin/JVM，无 Android 依赖)
+  ├─ 可行域、运动计划、步态真值与 GPS 观测
+  ├─ 预设自检、事件校验、回放、波形复核
+  └─ 真实记录导出策略及格式转换
 ```
 
-**P0 实际选型**：Kotlin 2.4.20 · Compose · 独立 JVM `sim-core` · Gradle 9.7.1 composite build · JUnit 5。固定版本见 `BUILD.md`。地图、图表和导出依赖留到 P2 再定，P0 不下载这些依赖，也不预设地图服务可以免除服务条款或隐私评估。
+模拟历史与真实记录分别存储，前者不能成为后者的 GPS 补点来源。Kotlin 2.4.20、Compose、Gradle 9.7.1 composite build 和 JUnit 5 的固定版本见 [`BUILD.md`](BUILD.md)。早期系统注入设想仅保留为历史研究笔记，不属于本次实现或验收范围。
 
 ## 4. 分阶段计划
 
@@ -104,8 +83,8 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 | 场景 | 位置 | 现状 |
 |---|---|---|
 | XML/TOML、Wrapper、shell 与下载保护检查 | 本地 | 可零网络运行 `python3 scripts/check_project.py` |
-| `sim-core` JUnit 测试 | 云端 JDK 17/21 | 工作流已配置，尚未运行 |
-| Gradle 与 Android 构建链 | Wrapper 9.7.1；AGP 9.3.1 / Kotlin 2.4.20；API 36 / Build Tools 36.0.0 | 工作流已配置，尚未运行；兼容性说明见 [`BUILD.md`](BUILD.md) |
+| `sim-core` JUnit 测试 | 云端 JDK 17/21 | 工作流已配置；本地未运行，需提交后由 CI 验证 |
+| Gradle 与 Android 构建链 | Wrapper 9.7.1；AGP 9.3.1 / Kotlin 2.4.20；API 36 / Build Tools 36.0.0 | 工作流已配置；本地不运行，需提交后由 CI 验证；兼容性说明见 [`BUILD.md`](BUILD.md) |
 | 真机验证 | 手机 | CI 成功后下载 APK，文件管理器安装，不强制要求 adb |
 
 - `sim-core` 使用自己的 `settings.gradle.kts`。独立命令为 `./gradlew -p sim-core test`，而不是依赖根 Android 工程能跳过 SDK 检查。
@@ -116,7 +95,7 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 - CNB 作为后续备通道，本次不创建未经测试的 `.cnb.yml`。共享入口和后续条件见 `BUILD.md`。
 - 本地仓库已初始化，`master` 已推送到 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)；云端已跑通测试、lint 与 APK 构建。
 
-平台版本从 37 回退到 36，因为 37 在 CI stable channel 不可安装（首次 run `35842081920` 已证）。真机界面验收尚未执行；P2 的界面逻辑仍应尽量保持可单测。
+平台版本从 37 回退到 36，因为 37 在 CI stable channel 不可安装（首次 run `35842081920` 已证）。此前版本已在真机做过启动与权限冒烟检查；本批 P6/P7 改动的界面、完整录制流程和独立接收 APK 尚未验收。
 
 | Phase | 交付物 | 关键风险 | 验证方式 |
 |---|---|---|---|
@@ -124,14 +103,12 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 | **P1 内核** | S1–S7 与 S7→S6 桥接已实现：可行性、计划、真值、GPS、导出、校准、Android 原始记录和稳定窗口转换 | **模型是否生理可信**——默认值仍全部未校准；当前设备记录桥接后为 insufficient，不生成默认模型 | CI 运行 `36050777912`/`36052244751` 已验证核心与 Android；真机已验证连续记录、服务控制和数据备份 |
 | **P2 仿真跑台** | Compose 表单（区间/距离/体重身高）→ 实时仪表盘 + 双曲线 + 轨迹地图 + 语音提示 + 结束导出 JSON/GPX/CSV | 图表与地图首次集成；**无法本地预览 UI** | 真机跑一次仿真，肉眼核对曲线无阶跃、无锁频 |
 | **P3 真跑模式** | 前台服务采真 GPS；逐步传感器估计实时步频，累计计数器只核对健康状态；可选语音提示及用户发起的真实 CSV/JSON/GPX 导出 | 手持/口袋场景和小米息屏限制尚未量化 | 核心策略测试与 CI 编译；三次户外独立参考计数完成前不声明步频误差范围 |
-| **P4 注入-A** | Mock Location 通道（`addTestProvider`，免 root）；风险等级、检测面、掩蔽清单 | 主流校园跑 App 多数直接查 mock 权限，**大概率不可用** | 目标 App 实测；失败则记录"确认不可行"而非无限调参 |
+| **P4 注入-A（历史设想，不在当前范围）** | 早期 Mock Location 研究，未实现 | 不作为独立 App 的发布门槛 | 不开展第三方应用检测绕过或兼容性验证 |
 | **P5 安全范围交付** | provenance-aware 本地事件协议、顺序/时间/计数器/路线校验、只读离线回放和 Android 私有模拟历史诊断 | 不提供系统级定位/传感器注入；不声明第三方兼容性或绕过检测 | sim-core JVM 单测、离线检查、CI lint/APK；规格见 `docs/superpowers/specs/2026-09-25-p5-safe-replay-design.md` |
-| **P6 硬化** | 全链路自检、参数预设、波形复核工具、文档 | 反作弊策略迭代 | 交付自查清单全过 |
-| P7 软件融合 | 研究中的候选方向（未验证、未实现）：自有 `MockLocationSink`、互斥/健康检查及可选 IMU 方案 | Android 版本、ROM 行为及许可兼容性需先验证 | 先验证平台 API 与法规/政策边界，再决定是否实现 |
+| **P6 硬化** | 记录生命周期状态持久化、原子关闭、严格真实导出资格、异常状态、自检、波形复核、参数预设和模拟历史诊断 | 代码与离线检查已完成；CI 编译/lint、真机多尺寸/后台流程、三次独立参考计数和 Google Play `specialUse` 评估仍待外部验收 | 离线结构检查、JVM/Python 测试；Android 编译/lint 交由 CI；规格见 `docs/superpowers/specs/2026-09-26-recording-lifecycle-export-design.md` 与 `docs/superpowers/specs/2026-09-26-p6-preflight-presets-design.md` |
+| **P7 设备诊断与自有接收端** | 本应用真实传感器时序诊断、用户主动导出诊断 JSON；共享应用内/独立安装的 JSON 事件测试接收端 | 独立包只读取用户选择的本地文件，没有第三方平台包或协议；不能推断其他应用读取结果，也未完成息屏/后台验证 | 离线结构检查和核心 JVM 测试；两包 Android 编译/lint 与真机需后续验证；范围见 `docs/superpowers/specs/2026-09-26-p7-platform-diagnostics-design.md` |
 
-**建议节奏**：P0→P1→P2 是一条完整可用产品（独立仿真跑台）；P3 是真跑体验；P4/P7 仍是未实现的系统注入研究项，P5 已按安全范围交付本地事件回放与诊断，不把系统注入作为当前产品能力。
-
-**P4 与 P7 的重叠**：P4 原本就是 `addTestProvider` 路线，P7a 直接把它做对做完整，两者合并实现、分期交付。P7b/P7c（互斥检测、健康回读）是 P4 的硬化项。
+**当前交付范围**：P0–P3 构成独立记录与模拟应用，P5 是应用内只读诊断，P6 是生命周期与体验硬化；P7 包含设备诊断及本地 JSON 自有测试接收端（应用内与独立 APK），仍待 CI 和真机验收。P4 和历史 P7 软件融合设想仅作为研究笔记，不实现系统注入，也不承诺第三方兼容或检测绕过。
 
 ## 5. 验收标准（P1+P2，P0 另见实施记录）
 
@@ -145,7 +122,7 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 
 ## 6. 风险与明确的不做承诺
 
-- **不承诺**能通过任何特定校园跑 App 的检测。P4/P7 的系统注入研究不代表实现或兼容性承诺；P5 的本地回放也不产生第三方可见数据。
+- **不承诺**能通过任何特定校园跑 App 的检测。P4 和历史 P7 软件融合的系统注入研究不代表实现或兼容性承诺；P5 的本地回放及 P7 首期诊断也不产生第三方可见数据。
 - 不保证任意区间都有可行解；按显式模型参数求交，并区分“模型配置冲突”和没有证据支持的生理结论。
 - 步频注入（IMU 层）需要 root；免 root 路线在传感器层面基本无解，这是平台限制而非实现问题。
 - 第三方代码与依赖的许可须在实际引入/分发前审查，不能仅凭“只参考机制”就保证没有许可义务；本次 P0 未复制 GoGoGo 业务代码。标枪定位的相关描述只是上游声明，未独立检查其源码、二进制或许可履行情况。
@@ -157,5 +134,6 @@ speedMps = cadenceSpm × stepLengthMeters / 60
 1. **完成 P0 真机验收**：安装最新 debug APK，确认启动页显示“2.70 米/秒”，并检查小屏/横屏/大字体/深浅色。
 2. **完成 S7 真机验收**：授予定位、活动识别和通知权限，息屏记录 GPS 与 `TYPE_STEP_COUNTER`，停止后取出 CSV 并检查数据完整性。
 3. **P1 已补齐 S7→S6 桥接**：运行 `scripts/recording_to_calibration.py` 将私有 Android 原始 CSV 转为稳定窗口输入；若报告为 `insufficient`，必须继续采集更干净的稳定段，不能放宽规则伪造拟合。
-4. **进入 P2**：实现真正的 App 内仿真跑台（配置表单、实时仪表盘、曲线/轨迹、暂停/停止/导出），而不是只保留当前验证页。
-5. 后续再评估 P3 真跑助手、P4 Mock Location、P6 硬化和 P7 软件融合；P5 安全回放已完成，不承诺兼容特定第三方 App。
+4. **P6 已完成代码交付**：生命周期硬化、严格导出资格、全链路自检、波形复核和参数预设已接入；当前工作区的 CI 编译、lint、APK 和真机多尺寸/后台流程仍需按交付门槛验收。
+5. **P7 待验收**：本应用真实传感器回调摘要和共享测试接收屏幕已接入；独立 APK 待 CI/真机验证，不触碰保密平台材料，也不宣称第三方兼容。
+6. 安排三次带独立参考计数的户外运行，并评估 `specialUse` 前台服务的 Google Play 政策适配；不据此承诺第三方兼容性。

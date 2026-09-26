@@ -56,9 +56,17 @@ import dev.ratemock.core.truth.RunState
 import dev.ratemock.core.truth.InteractiveSimulation
 import dev.ratemock.core.truth.SimulatorGait
 import dev.ratemock.core.truth.SimulationStatus
+import dev.ratemock.core.truth.SimulationPreflight
+import dev.ratemock.core.truth.SimulationPreflightInput
+import dev.ratemock.core.truth.PreflightSeverity
+import dev.ratemock.core.truth.WaveformReview
+import dev.ratemock.core.truth.WaveformReviewStatus
+import dev.ratemock.core.truth.WaveformSample
 import dev.ratemock.core.replay.LocalPositionEvent
 import dev.ratemock.core.replay.LocalReplayValidator
 import dev.ratemock.core.replay.ReplayIssueSeverity
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
@@ -118,23 +126,61 @@ fun SimulatorScreen(
     var snapshot by remember { mutableStateOf(readSnapshot(context)) }
     var history by remember { mutableStateOf(emptyList<HistoryPoint>()) }
     val replayDiagnostic = remember(history) { diagnoseHistory(history) }
+    val waveformReview = remember(history) {
+        WaveformReview.review(history.map { WaveformSample(it.elapsedSeconds.toDouble(), it.speedMps.toDouble(), it.cadenceSpm.toDouble()) })
+    }
     val exportScope = rememberCoroutineScope()
     var exportMenu by remember { mutableStateOf(false) }
     var exportFailed by remember { mutableStateOf(false) }
+    var exportSucceeded by remember { mutableStateOf(false) }
+    var exportWriting by remember { mutableStateOf(false) }
     var exportSnapshot by remember { mutableStateOf<SimulatorUiSnapshot?>(null) }
     val exportCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         val selected = exportSnapshot
-        if (uri != null && selected != null) exportScope.launch { exportFailed = !exportHistory(context, uri, selected, "csv") }
+        if (uri != null && selected != null) exportScope.launch {
+            exportWriting = true
+            exportFailed = false
+            exportSucceeded = false
+            exportSucceeded = exportHistory(context, uri, selected, "csv")
+            exportFailed = !exportSucceeded
+            exportWriting = false
+        }
         exportSnapshot = null
     }
     val exportJson = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         val selected = exportSnapshot
-        if (uri != null && selected != null) exportScope.launch { exportFailed = !exportHistory(context, uri, selected, "json") }
+        if (uri != null && selected != null) exportScope.launch {
+            exportWriting = true
+            exportFailed = false
+            exportSucceeded = false
+            exportSucceeded = exportHistory(context, uri, selected, "json")
+            exportFailed = !exportSucceeded
+            exportWriting = false
+        }
         exportSnapshot = null
     }
     val exportGpx = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri ->
         val selected = exportSnapshot
-        if (uri != null && selected != null) exportScope.launch { exportFailed = !exportHistory(context, uri, selected, "gpx") }
+        if (uri != null && selected != null) exportScope.launch {
+            exportWriting = true
+            exportFailed = false
+            exportSucceeded = false
+            exportSucceeded = exportHistory(context, uri, selected, "gpx")
+            exportFailed = !exportSucceeded
+            exportWriting = false
+        }
+        exportSnapshot = null
+    }
+    val exportEvents = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val selected = exportSnapshot
+        if (uri != null && selected != null) exportScope.launch {
+            exportWriting = true
+            exportFailed = false
+            exportSucceeded = false
+            exportSucceeded = exportHistory(context, uri, selected, "events")
+            exportFailed = !exportSucceeded
+            exportWriting = false
+        }
         exportSnapshot = null
     }
     var startingAt by remember { mutableStateOf(0L) }
@@ -185,6 +231,21 @@ fun SimulatorScreen(
         SimulatorService.STATUS_ERROR -> R.string.sim_status_error
         else -> R.string.sim_status_idle
     }
+    val preflightHistoryExists = remember(snapshot.historyFile) { hasSimulationHistoryFile(context, snapshot.historyFile) }
+    val preflightHistoryReadable = remember(snapshot.historyFile, history) {
+        !preflightHistoryExists || history.isNotEmpty()
+    }
+    val preflight = remember(notificationAllowed, validProfile, preflightHistoryExists, preflightHistoryReadable) {
+        SimulationPreflight.check(
+            SimulationPreflightInput(
+                notificationAllowed = notificationAllowed,
+                simulationDirectoryWritable = simulationDirectoryWritable(context),
+                historyReadable = preflightHistoryReadable,
+                historyExists = preflightHistoryExists,
+                validProfile = validProfile,
+            ),
+        )
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -193,6 +254,34 @@ fun SimulatorScreen(
         Text(stringResource(R.string.sim_title), modifier = Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineMedium)
         Text(stringResource(R.string.sim_model_note), color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium)
+        Text(stringResource(R.string.sim_presets_title), style = MaterialTheme.typography.titleSmall)
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedButton(onClick = {
+                targetSpeed = 1.4f
+                durationMinutes = 10f
+                manualMode = false
+                fatigueReduction = 0f
+            }, modifier = Modifier.fillMaxWidth(), enabled = !active) {
+                Text(stringResource(R.string.sim_preset_walk))
+            }
+            OutlinedButton(onClick = {
+                targetSpeed = 2.7f
+                durationMinutes = 10f
+                manualMode = false
+                fatigueReduction = 0f
+            }, modifier = Modifier.fillMaxWidth(), enabled = !active) {
+                Text(stringResource(R.string.sim_preset_steady))
+            }
+            OutlinedButton(onClick = {
+                targetSpeed = 3.5f
+                durationMinutes = 20f
+                manualMode = false
+                fatigueReduction = 0f
+            }, modifier = Modifier.fillMaxWidth(), enabled = !active) {
+                Text(stringResource(R.string.sim_preset_tempo))
+            }
+        }
+        PreflightCard(preflight)
         if (snapshot.status != "IDLE") {
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
                 Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -224,27 +313,32 @@ fun SimulatorScreen(
             }
             if (history.isNotEmpty()) {
                 SimulationHistory(history)
+                WaveformReviewCard(waveformReview)
                 ReplayDiagnosticCard(replayDiagnostic)
                 if (!active) {
                     androidx.compose.foundation.layout.Box {
-                        OutlinedButton(onClick = { exportMenu = true }) { Text(stringResource(R.string.sim_export)) }
+                        OutlinedButton(onClick = { exportMenu = true }, enabled = !exportWriting) { Text(stringResource(R.string.sim_export)) }
                         DropdownMenu(expanded = exportMenu, onDismissRequest = { exportMenu = false }) {
-                            listOf("csv", "json", "gpx").forEach { format ->
-                                DropdownMenuItem(text = { Text(format.uppercase()) }, onClick = {
+                            listOf("csv", "json", "gpx", "events").forEach { format ->
+                                DropdownMenuItem(text = { Text(if (format == "events") stringResource(R.string.sim_export_events) else format.uppercase()) }, onClick = {
                                     exportMenu = false
                                     exportSnapshot = snapshot
                                     exportFailed = false
-                                    val fileName = snapshot.historyFile.removeSuffix(".csv") + ".$format"
+                                    exportSucceeded = false
+                                    val fileName = snapshot.historyFile.removeSuffix(".csv") + if (format == "events") ".events.json" else ".$format"
                                     when (format) {
                                         "csv" -> exportCsv.launch(fileName)
                                         "json" -> exportJson.launch(fileName)
-                                        else -> exportGpx.launch(fileName)
+                                        "gpx" -> exportGpx.launch(fileName)
+                                        else -> exportEvents.launch(fileName)
                                     }
                                 })
                             }
                         }
                     }
                 }
+                if (exportWriting) Text(stringResource(R.string.sim_export_writing), color = MaterialTheme.colorScheme.primary)
+                if (exportSucceeded) Text(stringResource(R.string.sim_export_success), color = MaterialTheme.colorScheme.primary)
                 if (exportFailed) Text(stringResource(R.string.sim_export_error), color = MaterialTheme.colorScheme.error)
             }
         }
@@ -343,11 +437,41 @@ fun SimulatorScreen(
                         launchFailed = !onStart(targetSpeed.toDouble(), durationMinutes.roundToInt() * 60.0,
                             if (manualMode) manualCadence.toDouble() else null, fatigueReduction.toDouble())
                         if (!launchFailed) startingAt = System.currentTimeMillis()
-                    }, enabled = notificationAllowed && validProfile && startingAt == 0L, modifier = Modifier.fillMaxWidth()) {
+                    }, enabled = notificationAllowed && validProfile && !preflight.blocked && startingAt == 0L, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(if (startingAt != 0L) R.string.sim_starting else R.string.sim_start))
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PreflightCard(result: dev.ratemock.core.truth.SimulationPreflightResult) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(stringResource(R.string.sim_preflight_title), style = MaterialTheme.typography.titleMedium)
+            result.checks.forEach { check ->
+                val label = when (check.key) {
+                    "notifications" -> R.string.sim_preflight_notifications
+                    "simulation_directory" -> R.string.sim_preflight_directory
+                    "history" -> R.string.sim_preflight_history
+                    "parameters" -> R.string.sim_preflight_parameters
+                    else -> R.string.sim_preflight_injection
+                }
+                val status = when (check.severity) {
+                    PreflightSeverity.PASS -> R.string.sim_preflight_pass
+                    PreflightSeverity.WARNING -> R.string.sim_preflight_warning
+                    PreflightSeverity.BLOCKED -> R.string.sim_preflight_blocked
+                }
+                Text(stringResource(label, stringResource(status)), style = MaterialTheme.typography.bodyMedium,
+                    color = when (check.severity) {
+                        PreflightSeverity.PASS -> MaterialTheme.colorScheme.onSurface
+                        PreflightSeverity.WARNING, PreflightSeverity.BLOCKED -> MaterialTheme.colorScheme.error
+                    })
+            }
+            Text(stringResource(R.string.sim_preflight_note), color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -429,6 +553,7 @@ private suspend fun exportHistory(context: Context, uri: Uri, snapshot: Simulato
             val gps = GpsObservationBuilder(syntheticRoute).build(samples)
             val bundle = ExportBundle(samples, emptyList(), gps)
             val data = when (format) {
+                "events" -> localReplayJson(history)
                 "csv" -> "# provenance=simulation;calibration=uncalibrated\n" + CsvExporter.truth(samples)
                 "json" -> JsonExporter.summary(bundle, snapshot.steps, snapshot.elapsedSeconds.toDouble(), snapshot.distanceMeters.toDouble())
                 "gpx" -> {
@@ -437,10 +562,49 @@ private suspend fun exportHistory(context: Context, uri: Uri, snapshot: Simulato
                 }
                 else -> error("Unsupported export format")
             }
+            if (format == "events") require(data.toByteArray(Charsets.UTF_8).size <= 1_048_576) {
+                "Event input exceeds receiver limit"
+            }
             context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(data) }
                 ?: error("Unable to open selected document")
         }.isSuccess
     }
+
+private fun localReplayJson(history: List<HistoryPoint>): String {
+    require(history.isNotEmpty() && history.size <= 10_000)
+    val events = history.mapIndexed { index, point ->
+        require(point.elapsedSeconds.isFinite() && point.eastM.isFinite() && point.northM.isFinite())
+        JSONObject().put("type", "position").put("session_id", "simulation-history")
+            .put("sequence", index).put("time_s", point.elapsedSeconds.toDouble())
+            .put("east_m", point.eastM.toDouble()).put("north_m", point.northM.toDouble())
+    }
+    return JSONObject().put("schema", "ratemock.local-replay.v1")
+        .put("provenance", "simulation").put("events", JSONArray(events)).toString()
+}
+
+@Composable
+private fun WaveformReviewCard(result: dev.ratemock.core.truth.WaveformReviewResult) {
+    val status = when (result.status) {
+        WaveformReviewStatus.EMPTY -> R.string.sim_waveform_empty
+        WaveformReviewStatus.INSUFFICIENT -> R.string.sim_waveform_insufficient
+        WaveformReviewStatus.READY -> R.string.sim_waveform_ready
+        WaveformReviewStatus.INVALID -> R.string.sim_waveform_invalid
+    }
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(stringResource(R.string.sim_waveform_title), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.sim_waveform_status, stringResource(status)))
+            if (result.status == WaveformReviewStatus.READY) {
+                Text(stringResource(R.string.sim_waveform_summary, result.sampleCount, result.durationSeconds))
+                Text(stringResource(R.string.sim_waveform_speed_range, result.minSpeedMps, result.maxSpeedMps))
+                Text(stringResource(R.string.sim_waveform_cadence_range, result.minCadenceSpm, result.maxCadenceSpm))
+                Text(stringResource(R.string.sim_waveform_step_change, result.maxSpeedStepMps, result.maxCadenceStepSpm))
+            }
+            Text(stringResource(R.string.sim_waveform_note), color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
 
 @Composable
 private fun ReplayDiagnosticCard(diagnostic: ReplayDiagnostic) {
@@ -462,6 +626,14 @@ private fun diagnoseHistory(history: List<HistoryPoint>): ReplayDiagnostic {
     val validation = LocalReplayValidator.validate(events)
     return ReplayDiagnostic(validation.status.name, validation.eventCount, validation.durationSeconds.toFloat(),
         validation.issues.count { it.severity == ReplayIssueSeverity.WARNING })
+}
+
+private fun hasSimulationHistoryFile(context: Context, fileName: String): Boolean =
+    fileName.matches(Regex("simulation-[0-9]+\\.csv")) && File(context.filesDir, "simulations/$fileName").isFile
+
+private fun simulationDirectoryWritable(context: Context): Boolean {
+    val directory = File(context.filesDir, "simulations")
+    return (directory.isDirectory || directory.mkdirs()) && directory.canWrite()
 }
 
 private fun readSimulationHistory(context: Context, fileName: String): List<HistoryPoint> {

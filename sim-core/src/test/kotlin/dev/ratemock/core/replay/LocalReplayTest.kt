@@ -39,6 +39,22 @@ class LocalReplayTest {
         assertEquals(setOf("TIME_GAP", "POSITION_JUMP"), result.issues.map { it.code }.toSet())
     }
 
+    @Test fun warnsForEmptyInput() {
+        val result = LocalReplayValidator.validate(emptyList())
+        assertEquals(ReplayValidationStatus.WARNING, result.status)
+        assertEquals(0, result.eventCount)
+        assertEquals("EMPTY", result.issues.single().code)
+    }
+
+    @Test fun rejectsDuplicateSequenceAndMixedSessions() {
+        val result = LocalReplayValidator.validate(listOf(
+            LocalPositionEvent("first", 0, 0.0, 0.0, 0.0),
+            LocalStepDetectorEvent("second", 0, 1.0),
+        ))
+        assertEquals(ReplayValidationStatus.INVALID, result.status)
+        assertEquals(setOf("SESSION_MISMATCH", "SEQUENCE_ORDER"), result.issues.map { it.code }.toSet())
+    }
+
     @Test fun rejectsNonFiniteValuesAtConstruction() {
         try {
             LocalPositionEvent("s", 0, Double.NaN, 0.0, 0.0)

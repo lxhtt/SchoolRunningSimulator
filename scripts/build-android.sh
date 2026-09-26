@@ -13,4 +13,4 @@ fi
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-exec ./gradlew --no-daemon --console=plain --stacktrace :app:lintDebug :app:assembleDebug "$@"
+exec ./gradlew --no-daemon --console=plain --stacktrace :app:lintDebug :receiver-ui:lintDebug :receiver:lintDebug :app:assembleDebug :receiver:assembleDebug "$@"

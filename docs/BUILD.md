@@ -52,12 +52,12 @@ AGP 9.3.0 的 compatibility table 要求 Gradle ≥9.5.0、Build Tools 36.0.0、
 
 1. `core` job 在 JDK 17/21 分别运行静态检查和 14 个内核测试；测试命令移除 Android SDK 环境变量。
 2. 两个内核测试 job 均成功后，`android` job 在 Ubuntu 24.04 runner 上安装 Android API 36 和 Build Tools 36.0.0。
-3. 运行 `:app:lintDebug :app:assembleDebug`。
-4. 上传 debug APK、SHA-256、JUnit 报告和 lint 报告，保留 7 天。
+3. 运行 `:app:lintDebug :receiver-ui:lintDebug :receiver:lintDebug :app:assembleDebug :receiver:assembleDebug`。
+4. 分别上传主应用和独立接收端的 debug APK、各自 SHA-256、JUnit 报告和 lint 报告，保留 7 天。
 
 分支触发范围为 `master`；仅文档变动不会自动触发，仍可手动运行。Actions 依赖固定到完整提交 SHA，权限为 `contents: read`，不发布 Release、不推送代码。
 
-远程仓库为公开仓 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，本地 Git 已初始化，`origin` 指向该仓库，`master` 已推送并跟踪 `origin/master`。已获用户授权执行推送与触发 Actions。
+远程仓库为公开仓 [`lxhtt/SchoolRunningSimulator`](https://github.com/lxhtt/SchoolRunningSimulator)，本地 `master` 跟踪 `origin/master`。历史版本曾获授权推送并完成 CI；**当前未提交的 P6/P7 改动没有提交或公开推送授权**，必须在完整暂存快照确认后提交，公开推送另行确认。
 
 已完成的运行：
 
@@ -70,7 +70,7 @@ AGP 9.3.0 的 compatibility table 要求 Gradle ≥9.5.0、Build Tools 36.0.0、
 
 ### 安装
 
-下载 Artifact ZIP，解压后在手机文件管理器中打开 `app-debug.apk`，按系统提示为该文件管理器授权安装；不必安装 adb。下载 APK 仍然消耗手机或电脑的网络流量。
+下载对应 Artifact：`ratemock-debug-*` 是主应用，`ratemock-receiver-debug-*` 是独立测试接收端。分别解压后，在手机文件管理器中打开对应 APK，按系统提示为该文件管理器授权安装；不必安装 adb。下载 APK 仍然消耗手机或电脑的网络流量。
 
 本次已将 `ratemock-debug-2` 的 APK 下载到本机 `~/Downloads/RateMock-P0/app-debug.apk`（附 `SHA256SUMS` 和中文安装说明），可直接用数据线或局域网传到手机，避免手机重复下载。
 
