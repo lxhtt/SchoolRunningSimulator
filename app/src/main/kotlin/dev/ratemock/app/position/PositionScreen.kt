@@ -2,18 +2,9 @@ package dev.ratemock.app.position
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.location.Location
-import android.location.LocationListener
-import android.location.LocationManager
-import android.os.SystemClock
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +12,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,41 +35,23 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
-import kotlin.math.floor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalContext
 import dev.ratemock.app.position.MockLocationService
 import dev.ratemock.app.simulation.SimulatorService
 import dev.ratemock.core.position.PositionPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import java.net.HttpURLConnection
-import java.net.URLEncoder
-import java.net.URL
-import kotlin.math.min
-import kotlin.math.pow
-import kotlin.math.roundToInt
 
 @Composable
 fun PositionScreen(
@@ -129,27 +101,32 @@ fun PositionScreen(
             locationMessage = "请先授予定位权限"
             onDispose { }
         } else {
-            val manager = context.getSystemService(LocationManager::class.java)
-            val listener = object : LocationListener {
-                override fun onLocationChanged(location: Location) {
-                    if (!location.isFromMockProvider) {
-                        liveLocation = PositionPoint(location.latitude, location.longitude, location.altitude)
+            val client = runCatching { com.amap.api.location.AMapLocationClient(context.applicationContext) }.getOrNull()
+            if (client == null) {
+                locationMessage = "高德定位 SDK 初始化失败"
+                onDispose { }
+            } else {
+                val option = com.amap.api.location.AMapLocationClientOption()
+                    .setLocationMode(com.amap.api.location.AMapLocationClientOption.AMapLocationMode.Hight_Accuracy)
+                    .setInterval(1_000L)
+                    .setNeedAddress(false)
+                    .setMockEnable(false)
+                client.setLocationOption(option)
+                client.setLocationListener { location ->
+                    if (location != null && location.errorCode == 0 && !location.isMock) {
+                        val wgs = MapTiles.fromDisplay(location.latitude, location.longitude)
+                        liveLocation = PositionPoint(wgs.latitude, wgs.longitude, location.altitude)
                         locationMessage = "实时定位已更新"
+                    } else if (location != null && location.errorCode != 0) {
+                        locationMessage = "定位失败：${location.errorInfo ?: location.errorCode}"
                     }
                 }
-            }
-            val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
-                .filter { runCatching { manager.isProviderEnabled(it) }.getOrDefault(false) }
-            providers.forEach { provider ->
-                runCatching {
-                    manager.getLastKnownLocation(provider)?.let { location ->
-                        if (!location.isFromMockProvider) liveLocation = PositionPoint(location.latitude, location.longitude, location.altitude)
-                    }
-                    manager.requestLocationUpdates(provider, 1_000L, 1f, listener, android.os.Looper.getMainLooper())
+                client.startLocation()
+                onDispose {
+                    runCatching { client.stopLocation() }
+                    runCatching { client.onDestroy() }
                 }
             }
-            if (providers.isEmpty()) locationMessage = "系统定位服务未开启或暂无信号"
-            onDispose { runCatching { manager.removeUpdates(listener) } }
         }
     }
 
@@ -196,7 +173,7 @@ fun PositionScreen(
             }
             item {
                 Text("地图路线仅显示本次选点和摇杆轨迹；回放进度显示在服务状态中。地图使用高德栅格图层，应用坐标仍为 WGS84。", style = MaterialTheme.typography.bodySmall)
-                CoordinateMap(point, route, liveLocation, onTap = { lat, lon ->
+                AMapCoordinateMap(point, route, liveLocation, onTap = { lat, lon ->
                     runCatching { applyPoint(PositionPoint(lat, lon, point?.altitude ?: 0.0)) }
                 }, onUseLiveLocation = {
                     if (liveLocation != null) liveLocation?.let { applyPoint(it) } else onRequestPermissions()
@@ -276,7 +253,7 @@ fun PositionScreen(
                             Button(enabled = query.trim().length >= 2 && !searching, onClick = {
                                 searching = true; searchError = null
                                 scope.launch(Dispatchers.IO) {
-                                    val response = runCatching { searchPlaces(query) }.getOrElse { emptyList<SearchResult>() }
+                                    val response = runCatching { searchPlaces(context, query) }.getOrElse { emptyList<SearchResult>() }
                                     withContext(Dispatchers.Main) {
                                         if (response.isEmpty()) searchError = "没有找到结果或搜索服务不可用"
                                         results = response
@@ -285,7 +262,7 @@ fun PositionScreen(
                                 }
                             }) { Text(if (searching) "搜索中" else "搜索") }
                         }
-                        Text("搜索数据 © OpenStreetMap contributors · Nominatim", style = MaterialTheme.typography.labelSmall)
+                        Text("搜索数据 © 高德地图", style = MaterialTheme.typography.labelSmall)
                         searchError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         results.forEach { result ->
                             TextButton(
@@ -330,310 +307,41 @@ private fun NumberField(label: String, value: String, onValueChange: (String) ->
 
 private fun parseCoordinate(value: String): Double = value.trim().replace(',', '.').toDouble()
 
-private data class TileImage(val bitmap: android.graphics.Bitmap, val x: Int, val y: Int)
-
-@Composable
-private fun CoordinateMap(
-    point: PositionPoint?,
-    route: List<PositionPoint>,
-    liveLocation: PositionPoint?,
-    onTap: (Double, Double) -> Unit,
-    onUseLiveLocation: () -> Unit,
-    onRouteDrawn: (List<PositionPoint>) -> Unit,
-    hasLiveLocation: Boolean,
-) {
-    val context = LocalContext.current
-    var mapCenter by remember { mutableStateOf(point ?: liveLocation ?: PositionPoint(39.9042, 116.4074)) }
-    LaunchedEffect(liveLocation != null) {
-        if (point == null) liveLocation?.let { mapCenter = it }
-    }
-    val center = mapCenter
-    val routeColor = MaterialTheme.colorScheme.primary
-    val markerColor = MaterialTheme.colorScheme.error
-    val liveColor = MaterialTheme.colorScheme.tertiary
-    var mapSize by remember { mutableStateOf(IntSize.Zero) }
-    var zoom by rememberSaveable { mutableFloatStateOf(14f) }
-    val tileZoom = zoom.toInt().coerceIn(3, 19)
-    val latestCenter = rememberUpdatedState(mapCenter)
-    val latestZoom = rememberUpdatedState(zoom)
-    var tiles by remember { mutableStateOf(emptyList<TileImage>()) }
-    var drawing by rememberSaveable { mutableStateOf(false) }
-    var draftRoute by remember { mutableStateOf(emptyList<PositionPoint>()) }
-    LaunchedEffect(center, tileZoom, mapSize) {
-        if (mapSize == IntSize.Zero) return@LaunchedEffect
-        tiles = emptyList()
-        kotlinx.coroutines.delay(250)
-        val displayCenter = MapTiles.toDisplay(center)
-        val cx = MapTiles.x(displayCenter.longitude, tileZoom)
-        val cy = MapTiles.y(displayCenter.latitude, tileZoom)
-        val halfX = mapSize.width / 512.0 + 1.0
-        val halfY = mapSize.height / 512.0 + 1.0
-        val xs = (floor(cx - halfX).toInt()..floor(cx + halfX).toInt())
-        val ys = (floor(cy - halfY).toInt()..floor(cy + halfY).toInt())
-        val loaded = withContext(Dispatchers.IO) {
-            xs.flatMap { x -> ys.mapNotNull { y -> MapTiles.fetch(context, x, y, tileZoom)?.let { TileImage(it, x, y) } } }
-        }
-        tiles = loaded
-    }
-    Column {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(360.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .onSizeChanged { mapSize = it }
-                .pointerInput(drawing, mapSize) {
-                    if (drawing) {
-                        detectDragGestures(
-                            onDragStart = { offset ->
-                                draftRoute = listOf(screenToPoint(offset, latestCenter.value, latestZoom.value, size))
-                            },
-                            onDrag = { change, _ ->
-                                val next = screenToPoint(change.position, latestCenter.value, latestZoom.value, size)
-                                if (draftRoute.lastOrNull()?.distanceTo(next)?.let { it >= 2.0 } != false) {
-                                    draftRoute = (draftRoute + next).takeLast(200)
-                                }
-                                change.consume()
-                            },
-                            onDragEnd = {
-                                if (draftRoute.size > 1) onRouteDrawn(draftRoute)
-                                draftRoute = emptyList()
-                            },
-                            onDragCancel = { draftRoute = emptyList() },
-                        )
-                    } else {
-                        var lastTapAt = 0L
-                        var lastTapPosition = Offset.Zero
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            var currentCenter = latestCenter.value
-                            var currentZoom = latestZoom.value
-                            var previous = mapOf(down.id to down.position)
-                            var moved = false
-                            var hadMultiplePointers = false
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val active = event.changes.filter { it.pressed }
-                                if (active.isEmpty()) break
-                                if (active.size > 1) hadMultiplePointers = true
-                                val hasNewPointer = active.any { it.id !in previous }
-                                if (hasNewPointer) {
-                                    previous = active.associate { it.id to it.position }
-                                    continue
-                                }
-                                val currentCentroid = active.centroid { it.position }
-                                val previousCentroid = active.centroid { previous[it.id] ?: it.position }
-                                val pan = currentCentroid - previousCentroid
-                                val previousRadius = active.map { (previous[it.id] ?: it.position) - previousCentroid }
-                                    .map { kotlin.math.hypot(it.x.toDouble(), it.y.toDouble()) }
-                                    .average()
-                                val currentRadius = active.map { it.position - currentCentroid }
-                                    .map { kotlin.math.hypot(it.x.toDouble(), it.y.toDouble()) }
-                                    .average()
-                                val gestureZoom = if (active.size > 1 && previousRadius > 0.5) {
-                                    (currentRadius / previousRadius).toFloat().coerceIn(0.5f, 2f)
-                                } else {
-                                    1f
-                                }
-                                if (pan.getDistance() > 8f || kotlin.math.abs(gestureZoom - 1f) > 0.01f || active.size > 1) {
-                                    moved = true
-                                }
-                                if (moved) {
-                                    val zoomChange = if (active.size > 1) gestureZoom else 1f
-                                    val transformed = transformMapCenter(
-                                        center = currentCenter,
-                                        centroid = currentCentroid,
-                                        pan = pan,
-                                        zoomChange = zoomChange,
-                                        zoom = currentZoom,
-                                        size = size,
-                                    )
-                                    currentCenter = transformed.first
-                                    currentZoom = transformed.second
-                                    mapCenter = currentCenter
-                                    zoom = currentZoom
-                                }
-                                active.forEach { it.consume() }
-                                previous = active.associate { it.id to it.position }
-                            }
-                            if (!moved && !hadMultiplePointers) {
-                                val now = SystemClock.uptimeMillis()
-                                val isDoubleTap = now - lastTapAt in 1..350 &&
-                                    (down.position - lastTapPosition).getDistance() < 48f
-                                if (isDoubleTap) {
-                                        val transformed = transformMapCenter(
-                                            center = latestCenter.value,
-                                            centroid = down.position,
-                                            pan = Offset.Zero,
-                                            zoomChange = 2f,
-                                            zoom = latestZoom.value,
-                                            size = size,
-                                        )
-                                    mapCenter = transformed.first
-                                    zoom = transformed.second
-                                    lastTapAt = 0L
-                                } else {
-                                    val selected = screenToPoint(down.position, latestCenter.value, latestZoom.value, size)
-                                    onTap(selected.latitude, selected.longitude)
-                                    lastTapAt = now
-                                    lastTapPosition = down.position
-                                }
-                            }
-                        }
-                    }
-                },
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                val displayCenter = MapTiles.toDisplay(center)
-                val tileScale = 2.0.pow((zoom - tileZoom).toDouble())
-                val cx = MapTiles.x(displayCenter.longitude, tileZoom)
-                val cy = MapTiles.y(displayCenter.latitude, tileZoom)
-                tiles.forEach { tile ->
-                    val left = (size.width / 2 + (tile.x - cx) * 256 * tileScale).roundToInt()
-                    val top = (size.height / 2 + (tile.y - cy) * 256 * tileScale).roundToInt()
-                    val tileSize = (256 * tileScale).roundToInt().coerceAtLeast(1)
-                    drawImage(tile.bitmap.asImageBitmap(), dstSize = IntSize(tileSize, tileSize), dstOffset = IntOffset(left, top))
-                }
-                if (tiles.isEmpty()) {
-                    val grid = Color.Gray.copy(alpha = 0.25f)
-                    for (i in 1..5) {
-                        drawLine(grid, Offset(size.width * i / 6f, 0f), Offset(size.width * i / 6f, size.height))
-                        drawLine(grid, Offset(0f, size.height * i / 6f), Offset(size.width, size.height * i / 6f))
-                    }
-                }
-                fun project(item: PositionPoint): Offset = projectPoint(item, center, zoom, mapSize)
-                val visibleRoute = route + draftRoute
-                if (visibleRoute.size > 1) {
-                    val path = Path().apply {
-                        moveTo(project(visibleRoute.first()).x, project(visibleRoute.first()).y)
-                        visibleRoute.drop(1).forEach { lineTo(project(it).x, project(it).y) }
-                    }
-                    drawPath(path, Color.Black.copy(alpha = 0.65f), style = Stroke(width = 11f))
-                    drawPath(path, routeColor, style = Stroke(width = 7f))
-                }
-                point?.let {
-                    val selectedPosition = project(it)
-                    drawCircle(Color.White, radius = 13f, center = selectedPosition)
-                    drawCircle(markerColor, radius = 8f, center = selectedPosition)
-                }
-                liveLocation?.let {
-                    val livePosition = project(it)
-                    drawCircle(Color.White, radius = 12f, center = livePosition)
-                    drawCircle(liveColor, radius = 7f, center = livePosition)
-                }
-            }
-            TextButton(
-                onClick = {
-                    drawing = !drawing
-                    if (!drawing) draftRoute = emptyList()
-                },
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), RoundedCornerShape(20.dp)),
-            ) { Text(if (drawing) "完成画线" else "画轨迹") }
-            TextButton(
-                enabled = true,
-                onClick = onUseLiveLocation,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), RoundedCornerShape(20.dp)),
-            ) { Text(if (hasLiveLocation) "我的位置" else "开启定位") }
-            Text("© 高德地图", Modifier.align(Alignment.BottomStart)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)).padding(4.dp),
-                color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelSmall)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (drawing) "正在画线：拖动手指绘制路线" else "轻触选点 · 拖动地图 · 双指缩放 · z${zoom.formatZoom()}", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
-            TextButton(enabled = zoom > 3f, onClick = { zoom = (zoom - 1f).coerceAtLeast(3f) }) { Text("−") }
-            TextButton(enabled = zoom < 19f, onClick = { zoom = (zoom + 1f).coerceAtMost(19f) }) { Text("+") }
-        }
-    }
-}
-
-private fun List<PointerInputChange>.centroid(position: (PointerInputChange) -> Offset): Offset {
-    if (isEmpty()) return Offset.Zero
-    val total = fold(Offset.Zero) { acc, change -> acc + position(change) }
-    return total / size.toFloat()
-}
-
-private fun transformMapCenter(
-    center: PositionPoint,
-    centroid: Offset,
-    pan: Offset,
-    zoomChange: Float,
-    zoom: Float,
-    size: IntSize,
-): Pair<PositionPoint, Float> {
-    val nextZoom = (zoom + kotlin.math.log2(zoomChange.coerceIn(0.25f, 4f).toDouble()).toFloat()).coerceIn(3f, 19f)
-    val oldScale = 2.0.pow(zoom.toDouble())
-    val newScale = 2.0.pow(nextZoom.toDouble())
-    val displayCenter = MapTiles.toDisplay(center)
-    val centerX = MapTiles.x(displayCenter.longitude, zoom) / oldScale
-    val centerY = MapTiles.y(displayCenter.latitude, zoom) / oldScale
-    val offset = centroid - Offset(size.width / 2f, size.height / 2f)
-    val nextX = (centerX + offset.x / (256.0 * oldScale) - offset.x / (256.0 * newScale) - pan.x / (256.0 * newScale)) * newScale
-    val nextY = (centerY + offset.y / (256.0 * oldScale) - offset.y / (256.0 * newScale) - pan.y / (256.0 * newScale)) * newScale
-    val display = MapTiles.fromDisplay(
-        MapTiles.latAtScale(nextY, newScale),
-        ((MapTiles.lonAtScale(nextX, newScale) + 180) % 360 + 360) % 360 - 180,
-    )
-    return PositionPoint(display.latitude, display.longitude, center.altitude) to nextZoom
-}
-
-private fun projectPoint(item: PositionPoint, center: PositionPoint, zoom: Float, size: IntSize): Offset {
-    val displayCenter = MapTiles.toDisplay(center)
-    val display = MapTiles.toDisplay(item)
-    return Offset(
-        (size.width / 2 + (MapTiles.x(display.longitude, zoom) - MapTiles.x(displayCenter.longitude, zoom)) * 256).toFloat(),
-        (size.height / 2 + (MapTiles.y(display.latitude, zoom) - MapTiles.y(displayCenter.latitude, zoom)) * 256).toFloat(),
-    )
-}
-
-private fun screenToPoint(offset: Offset, center: PositionPoint, zoom: Float, size: IntSize): PositionPoint {
-    val displayCenter = MapTiles.toDisplay(center)
-    val scale = 2.0.pow(zoom.toDouble())
-    val tx = MapTiles.x(displayCenter.longitude, zoom) + (offset.x - size.width / 2f) / 256.0
-    val ty = MapTiles.y(displayCenter.latitude, zoom) + (offset.y - size.height / 2f) / 256.0
-    val display = MapTiles.fromDisplay(
-        MapTiles.latAtScale(ty, scale),
-        ((MapTiles.lonAtScale(tx, scale) + 180) % 360 + 360) % 360 - 180,
-    )
-    return PositionPoint(display.latitude, display.longitude, center.altitude)
-}
-
-private fun Float.formatZoom(): String = String.format(java.util.Locale.US, "%.1f", this)
 
 private data class SearchResult(val name: String, val point: PositionPoint)
 
 private var lastSearchAtMs = 0L
 
 @Synchronized
-private fun searchPlaces(query: String): List<SearchResult> {
+private fun searchPlaces(context: android.content.Context, query: String): List<SearchResult> {
     val now = System.currentTimeMillis()
     check(now - lastSearchAtMs >= 1_000L) { "搜索请求过于频繁，请稍后再试" }
     lastSearchAtMs = now
-    val encoded = URLEncoder.encode(query.trim().take(80), "UTF-8")
-    val connection = (URL("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=$encoded").openConnection() as HttpURLConnection).apply {
-        connectTimeout = 6_000; readTimeout = 8_000; requestMethod = "GET"
-        setRequestProperty("User-Agent", "RateMock/0.1 (+https://github.com/lxhtt/SchoolRunningSimulator)")
-    }
-    return try {
-        if (connection.responseCode !in 200..299) error("搜索服务返回 ${connection.responseCode}")
-        val payload = connection.inputStream.use { stream ->
-            val buffer = ByteArray(8_192)
-            val output = java.io.ByteArrayOutputStream()
-            while (output.size() <= 100_000) {
-                val count = stream.read(buffer)
-                if (count < 0) break
-                output.write(buffer, 0, count)
+    val latch = java.util.concurrent.CountDownLatch(1)
+    var output: List<SearchResult> = emptyList()
+    var failure: String? = null
+    try {
+        val searchQuery = com.amap.api.services.poisearch.PoiSearch.Query(query.trim().take(80), "", "")
+        searchQuery.pageSize = 5
+        val search = com.amap.api.services.poisearch.PoiSearch(context.applicationContext, searchQuery)
+        search.setOnPoiSearchListener(object : com.amap.api.services.poisearch.PoiSearch.OnPoiSearchListener {
+            override fun onPoiSearched(result: com.amap.api.services.poisearch.PoiResult?, code: Int) {
+                if (code == 1000 && result != null) {
+                    output = result.pois.orEmpty().take(5).mapNotNull { item ->
+                        val location = item.latLonPoint ?: return@mapNotNull null
+                        val wgs = MapTiles.fromDisplay(location.latitude, location.longitude)
+                        SearchResult(item.title.orEmpty().take(160), PositionPoint(wgs.latitude, wgs.longitude))
+                    }
+                } else failure = "高德搜索失败（$code）"
+                latch.countDown()
             }
-            check(output.size() <= 100_000) { "搜索响应过大" }
-            output.toString(Charsets.UTF_8.name())
-        }
-        val array = JSONArray(payload)
-        (0 until min(array.length(), 5)).mapNotNull { index -> runCatching {
-            val item = array.getJSONObject(index)
-            SearchResult(item.optString("display_name").take(160), PositionPoint(item.getDouble("lat"), item.getDouble("lon")))
-        }.getOrNull() }
-    } finally {
-        connection.disconnect()
+            override fun onPoiItemSearched(item: com.amap.api.services.core.PoiItem?, code: Int) = Unit
+        })
+        search.searchPOIAsyn()
+        check(latch.await(12, java.util.concurrent.TimeUnit.SECONDS)) { "高德搜索超时" }
+        failure?.let { error(it) }
+        return output
+    } catch (error: Exception) {
+        throw IllegalStateException(error.message ?: "高德搜索不可用", error)
     }
 }

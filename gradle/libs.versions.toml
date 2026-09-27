@@ -15,6 +15,9 @@ kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5", versi
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+amap-3dmap = { module = "com.amap.api:3dmap", version = "9.8.3" }
+amap-location = { module = "com.amap.api:location", version = "6.5.1" }
+amap-search = { module = "com.amap.api:search", version = "9.7.1" }
 
 [plugins]
 android-library = { id = "com.android.library", version.ref = "agp" }
