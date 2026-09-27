@@ -10,6 +10,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.LinkedHashMap
 import kotlin.math.PI
+import kotlin.math.pow
 import kotlin.math.abs
 import kotlin.math.atan
 import kotlin.math.cos
@@ -79,13 +80,20 @@ internal object MapTiles {
         longitude in 72.004..137.8347 && latitude in 0.8293..55.8271
 
     fun x(longitude: Double, zoom: Int): Double = (longitude + 180.0) / 360.0 * (1 shl zoom)
+    fun x(longitude: Double, zoom: Float): Double = (longitude + 180.0) / 360.0 * 2.0.pow(zoom.toDouble())
 
     fun y(latitude: Double, zoom: Int): Double {
         val radians = Math.toRadians(latitude.coerceIn(-85.0511, 85.0511))
         return (1 - ln(tan(radians) + 1 / kotlin.math.cos(radians)) / PI) / 2 * (1 shl zoom)
     }
+    fun y(latitude: Double, zoom: Float): Double {
+        val radians = Math.toRadians(latitude.coerceIn(-85.0511, 85.0511))
+        return (1 - ln(tan(radians) + 1 / kotlin.math.cos(radians)) / PI) / 2 * 2.0.pow(zoom.toDouble())
+    }
     fun lon(x: Double, zoom: Int): Double = x / (1 shl zoom) * 360 - 180
     fun lat(y: Double, zoom: Int): Double = Math.toDegrees(atan(sinh(PI * (1 - 2 * y / (1 shl zoom)))))
+    fun lonAtScale(x: Double, scale: Double): Double = x / scale * 360.0 - 180.0
+    fun latAtScale(y: Double, scale: Double): Double = Math.toDegrees(atan(sinh(PI * (1 - 2 * y / scale))))
 
     fun fetch(context: Context, x: Int, y: Int, zoom: Int): Bitmap? {
         val width = 1 shl zoom

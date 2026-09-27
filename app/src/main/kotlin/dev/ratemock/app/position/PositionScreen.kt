@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.floor
 import androidx.compose.ui.semantics.heading
@@ -343,7 +344,6 @@ private fun CoordinateMap(
 ) {
     val context = LocalContext.current
     var mapCenter by remember { mutableStateOf(point ?: liveLocation ?: PositionPoint(39.9042, 116.4074)) }
-    LaunchedEffect(point) { point?.let { mapCenter = it } }
     LaunchedEffect(liveLocation != null) {
         if (point == null) liveLocation?.let { mapCenter = it }
     }
@@ -352,25 +352,26 @@ private fun CoordinateMap(
     val markerColor = MaterialTheme.colorScheme.error
     val liveColor = MaterialTheme.colorScheme.tertiary
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
-    var zoom by rememberSaveable { mutableStateOf(14) }
+    var zoom by rememberSaveable { mutableFloatStateOf(14f) }
+    val tileZoom = zoom.toInt().coerceIn(3, 19)
     val latestCenter = rememberUpdatedState(mapCenter)
     val latestZoom = rememberUpdatedState(zoom)
     var tiles by remember { mutableStateOf(emptyList<TileImage>()) }
     var drawing by rememberSaveable { mutableStateOf(false) }
     var draftRoute by remember { mutableStateOf(emptyList<PositionPoint>()) }
-    LaunchedEffect(center, zoom, mapSize) {
+    LaunchedEffect(center, tileZoom, mapSize) {
         if (mapSize == IntSize.Zero) return@LaunchedEffect
         tiles = emptyList()
         kotlinx.coroutines.delay(250)
         val displayCenter = MapTiles.toDisplay(center)
-        val cx = MapTiles.x(displayCenter.longitude, zoom)
-        val cy = MapTiles.y(displayCenter.latitude, zoom)
+        val cx = MapTiles.x(displayCenter.longitude, tileZoom)
+        val cy = MapTiles.y(displayCenter.latitude, tileZoom)
         val halfX = mapSize.width / 512.0 + 1.0
         val halfY = mapSize.height / 512.0 + 1.0
         val xs = (floor(cx - halfX).toInt()..floor(cx + halfX).toInt())
         val ys = (floor(cy - halfY).toInt()..floor(cy + halfY).toInt())
         val loaded = withContext(Dispatchers.IO) {
-            xs.flatMap { x -> ys.mapNotNull { y -> MapTiles.fetch(context, x, y, zoom)?.let { TileImage(it, x, y) } } }
+            xs.flatMap { x -> ys.mapNotNull { y -> MapTiles.fetch(context, x, y, tileZoom)?.let { TileImage(it, x, y) } } }
         }
         tiles = loaded
     }
@@ -410,7 +411,6 @@ private fun CoordinateMap(
                             var previous = mapOf(down.id to down.position)
                             var moved = false
                             var hadMultiplePointers = false
-                            var accumulatedPinchScale = 1f
                             while (true) {
                                 val event = awaitPointerEvent()
                                 val active = event.changes.filter { it.pressed }
@@ -439,19 +439,7 @@ private fun CoordinateMap(
                                     moved = true
                                 }
                                 if (moved) {
-                                    val zoomChange = if (active.size > 1) {
-                                        accumulatedPinchScale = (accumulatedPinchScale * gestureZoom).coerceIn(0.25f, 4f)
-                                        val step = kotlin.math.log2(accumulatedPinchScale.toDouble()).roundToInt()
-                                        if (step != 0) {
-                                            val change = 2.0.pow(step.toDouble()).toFloat()
-                                            accumulatedPinchScale /= change
-                                            change
-                                        } else {
-                                            1f
-                                        }
-                                    } else {
-                                        1f
-                                    }
+                                    val zoomChange = if (active.size > 1) gestureZoom else 1f
                                     val transformed = transformMapCenter(
                                         center = currentCenter,
                                         centroid = currentCentroid,
@@ -473,14 +461,14 @@ private fun CoordinateMap(
                                 val isDoubleTap = now - lastTapAt in 1..350 &&
                                     (down.position - lastTapPosition).getDistance() < 48f
                                 if (isDoubleTap) {
-                                    val transformed = transformMapCenter(
-                                        center = latestCenter.value,
-                                        centroid = down.position,
-                                        pan = Offset.Zero,
-                                        zoomChange = 2f,
-                                        zoom = latestZoom.value,
-                                        size = size,
-                                    )
+                                        val transformed = transformMapCenter(
+                                            center = latestCenter.value,
+                                            centroid = down.position,
+                                            pan = Offset.Zero,
+                                            zoomChange = 2f,
+                                            zoom = latestZoom.value,
+                                            size = size,
+                                        )
                                     mapCenter = transformed.first
                                     zoom = transformed.second
                                     lastTapAt = 0L
@@ -497,12 +485,14 @@ private fun CoordinateMap(
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 val displayCenter = MapTiles.toDisplay(center)
-                val cx = MapTiles.x(displayCenter.longitude, zoom)
-                val cy = MapTiles.y(displayCenter.latitude, zoom)
+                val tileScale = 2.0.pow((zoom - tileZoom).toDouble())
+                val cx = MapTiles.x(displayCenter.longitude, tileZoom)
+                val cy = MapTiles.y(displayCenter.latitude, tileZoom)
                 tiles.forEach { tile ->
-                    val left = (size.width / 2 + (tile.x - cx) * 256).roundToInt()
-                    val top = (size.height / 2 + (tile.y - cy) * 256).roundToInt()
-                    drawImage(tile.bitmap.asImageBitmap(), topLeft = Offset(left.toFloat(), top.toFloat()))
+                    val left = (size.width / 2 + (tile.x - cx) * 256 * tileScale).roundToInt()
+                    val top = (size.height / 2 + (tile.y - cy) * 256 * tileScale).roundToInt()
+                    val tileSize = (256 * tileScale).roundToInt().coerceAtLeast(1)
+                    drawImage(tile.bitmap.asImageBitmap(), dstSize = IntSize(tileSize, tileSize), dstOffset = IntOffset(left, top))
                 }
                 if (tiles.isEmpty()) {
                     val grid = Color.Gray.copy(alpha = 0.25f)
@@ -521,9 +511,11 @@ private fun CoordinateMap(
                     drawPath(path, Color.Black.copy(alpha = 0.65f), style = Stroke(width = 11f))
                     drawPath(path, routeColor, style = Stroke(width = 7f))
                 }
-                val centerPosition = project(center)
-                drawCircle(Color.White, radius = 13f, center = centerPosition)
-                drawCircle(markerColor, radius = 8f, center = centerPosition)
+                point?.let {
+                    val selectedPosition = project(it)
+                    drawCircle(Color.White, radius = 13f, center = selectedPosition)
+                    drawCircle(markerColor, radius = 8f, center = selectedPosition)
+                }
                 liveLocation?.let {
                     val livePosition = project(it)
                     drawCircle(Color.White, radius = 12f, center = livePosition)
@@ -549,9 +541,9 @@ private fun CoordinateMap(
                 color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelSmall)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (drawing) "正在画线：拖动手指绘制路线" else "轻触选点 · 拖动地图 · 双指缩放 · z$zoom", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
-            TextButton(enabled = zoom > 3, onClick = { zoom-- }) { Text("−") }
-            TextButton(enabled = zoom < 18, onClick = { zoom++ }) { Text("+") }
+            Text(if (drawing) "正在画线：拖动手指绘制路线" else "轻触选点 · 拖动地图 · 双指缩放 · z${zoom.formatZoom()}", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
+            TextButton(enabled = zoom > 3f, onClick = { zoom = (zoom - 1f).coerceAtLeast(3f) }) { Text("−") }
+            TextButton(enabled = zoom < 19f, onClick = { zoom = (zoom + 1f).coerceAtMost(19f) }) { Text("+") }
         }
     }
 }
@@ -567,26 +559,26 @@ private fun transformMapCenter(
     centroid: Offset,
     pan: Offset,
     zoomChange: Float,
-    zoom: Int,
+    zoom: Float,
     size: IntSize,
-): Pair<PositionPoint, Int> {
-    val nextZoom = (zoom + kotlin.math.log2(zoomChange.toDouble()).roundToInt()).coerceIn(3, 19)
-    val scale = 2.0.pow((nextZoom - zoom).toDouble())
+): Pair<PositionPoint, Float> {
+    val nextZoom = (zoom + kotlin.math.log2(zoomChange.coerceIn(0.25f, 4f).toDouble()).toFloat()).coerceIn(3f, 19f)
+    val oldScale = 2.0.pow(zoom.toDouble())
+    val newScale = 2.0.pow(nextZoom.toDouble())
     val displayCenter = MapTiles.toDisplay(center)
-    val centerX = MapTiles.x(displayCenter.longitude, zoom) * scale
-    val centerY = MapTiles.y(displayCenter.latitude, zoom) * scale
+    val centerX = MapTiles.x(displayCenter.longitude, zoom) / oldScale
+    val centerY = MapTiles.y(displayCenter.latitude, zoom) / oldScale
     val offset = centroid - Offset(size.width / 2f, size.height / 2f)
-    val transformed = Offset(((1.0 - scale) * offset.x + pan.x).toFloat(), ((1.0 - scale) * offset.y + pan.y).toFloat())
-    val nextX = centerX - transformed.x / 256.0
-    val nextY = centerY - transformed.y / 256.0
+    val nextX = (centerX + offset.x / (256.0 * oldScale) - offset.x / (256.0 * newScale) - pan.x / (256.0 * newScale)) * newScale
+    val nextY = (centerY + offset.y / (256.0 * oldScale) - offset.y / (256.0 * newScale) - pan.y / (256.0 * newScale)) * newScale
     val display = MapTiles.fromDisplay(
-        MapTiles.lat(nextY, nextZoom),
-        ((MapTiles.lon(nextX, nextZoom) + 180) % 360 + 360) % 360 - 180,
+        MapTiles.latAtScale(nextY, newScale),
+        ((MapTiles.lonAtScale(nextX, newScale) + 180) % 360 + 360) % 360 - 180,
     )
     return PositionPoint(display.latitude, display.longitude, center.altitude) to nextZoom
 }
 
-private fun projectPoint(item: PositionPoint, center: PositionPoint, zoom: Int, size: IntSize): Offset {
+private fun projectPoint(item: PositionPoint, center: PositionPoint, zoom: Float, size: IntSize): Offset {
     val displayCenter = MapTiles.toDisplay(center)
     val display = MapTiles.toDisplay(item)
     return Offset(
@@ -595,16 +587,19 @@ private fun projectPoint(item: PositionPoint, center: PositionPoint, zoom: Int, 
     )
 }
 
-private fun screenToPoint(offset: Offset, center: PositionPoint, zoom: Int, size: IntSize): PositionPoint {
+private fun screenToPoint(offset: Offset, center: PositionPoint, zoom: Float, size: IntSize): PositionPoint {
     val displayCenter = MapTiles.toDisplay(center)
+    val scale = 2.0.pow(zoom.toDouble())
     val tx = MapTiles.x(displayCenter.longitude, zoom) + (offset.x - size.width / 2f) / 256.0
     val ty = MapTiles.y(displayCenter.latitude, zoom) + (offset.y - size.height / 2f) / 256.0
     val display = MapTiles.fromDisplay(
-        MapTiles.lat(ty, zoom),
-        ((MapTiles.lon(tx, zoom) + 180) % 360 + 360) % 360 - 180,
+        MapTiles.latAtScale(ty, scale),
+        ((MapTiles.lonAtScale(tx, scale) + 180) % 360 + 360) % 360 - 180,
     )
     return PositionPoint(display.latitude, display.longitude, center.altitude)
 }
+
+private fun Float.formatZoom(): String = String.format(java.util.Locale.US, "%.1f", this)
 
 private data class SearchResult(val name: String, val point: PositionPoint)
 
