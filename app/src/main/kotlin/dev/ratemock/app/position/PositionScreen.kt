@@ -9,6 +9,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.text.KeyboardOptions
@@ -194,6 +195,16 @@ fun PositionScreen(
                     runCatching { applyPoint(PositionPoint(lat, lon, point?.altitude ?: 0.0)) }
                 }, onUseLiveLocation = {
                     if (liveLocation != null) liveLocation?.let { applyPoint(it) } else onRequestPermissions()
+                }, onRouteDrawn = { drawnRoute ->
+                    if (drawnRoute.isNotEmpty()) {
+                        route = drawnRoute.takeLast(200)
+                        drawnRoute.last().let {
+                            point = it
+                            latitudeText = it.latitude.toString()
+                            longitudeText = it.longitude.toString()
+                            altitudeText = it.altitude.toString()
+                        }
+                    }
                 }, hasLiveLocation = liveLocation != null)
                 Card(shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -323,6 +334,7 @@ private fun CoordinateMap(
     liveLocation: PositionPoint?,
     onTap: (Double, Double) -> Unit,
     onUseLiveLocation: () -> Unit,
+    onRouteDrawn: (List<PositionPoint>) -> Unit,
     hasLiveLocation: Boolean,
 ) {
     val context = LocalContext.current
@@ -338,6 +350,8 @@ private fun CoordinateMap(
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
     var zoom by rememberSaveable { mutableStateOf(14) }
     var tiles by remember { mutableStateOf(emptyList<TileImage>()) }
+    var drawing by rememberSaveable { mutableStateOf(false) }
+    var draftRoute by remember { mutableStateOf(emptyList<PositionPoint>()) }
     LaunchedEffect(center, zoom, mapSize) {
         if (mapSize == IntSize.Zero) return@LaunchedEffect
         tiles = emptyList()
@@ -357,30 +371,49 @@ private fun CoordinateMap(
     Column {
         Box(Modifier.fillMaxWidth().height(300.dp).background(MaterialTheme.colorScheme.surfaceVariant)
             .onSizeChanged { mapSize = it }
-            .pointerInput(center, zoom) {
-                detectTapGestures(
-                    onDoubleTap = { zoom = (zoom + 1).coerceAtMost(19) },
-                    onTap = { offset ->
-                        val displayCenter = MapTiles.toDisplay(center)
-                        val tx = MapTiles.x(displayCenter.longitude, zoom) + (offset.x - size.width / 2f) / 256.0
-                        val ty = MapTiles.y(displayCenter.latitude, zoom) + (offset.y - size.height / 2f) / 256.0
-                        val world = MapTiles.fromDisplay(MapTiles.lat(ty, zoom), ((MapTiles.lon(tx, zoom) + 180) % 360 + 360) % 360 - 180)
-                        onTap(world.latitude, world.longitude)
-                    },
-                )
-            }
-            .pointerInput(center, zoom) {
-                detectTransformGestures { _, pan, zoomChange, _ ->
-                    val displayCenter = MapTiles.toDisplay(center)
-                    val nextX = MapTiles.x(displayCenter.longitude, zoom) - pan.x / 256.0
-                    val nextY = MapTiles.y(displayCenter.latitude, zoom) - pan.y / 256.0
-                    val nextZoom = (zoom + kotlin.math.log2(zoomChange.toDouble()).roundToInt()).coerceIn(3, 19)
-                    val next = MapTiles.fromDisplay(
-                        MapTiles.lat(nextY, zoom),
-                        ((MapTiles.lon(nextX, zoom) + 180) % 360 + 360) % 360 - 180,
+            .pointerInput(drawing, center, zoom) {
+                if (drawing) {
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            draftRoute = listOf(screenToPoint(offset, center, zoom, size))
+                        },
+                        onDrag = { change, _ ->
+                            val next = screenToPoint(change.position, center, zoom, size)
+                            if (draftRoute.lastOrNull()?.distanceTo(next)?.let { it >= 2.0 } != false) {
+                                draftRoute = (draftRoute + next).takeLast(400)
+                            }
+                            change.consumePositionChange()
+                        },
+                        onDragEnd = {
+                            if (draftRoute.size > 1) onRouteDrawn(draftRoute)
+                            draftRoute = emptyList()
+                        },
+                        onDragCancel = { draftRoute = emptyList() },
                     )
-                    mapCenter = PositionPoint(next.latitude, next.longitude, center.altitude)
-                    if (nextZoom != zoom) zoom = nextZoom
+                } else {
+                    detectTapGestures(
+                        onDoubleTap = { zoom = (zoom + 1).coerceAtMost(19) },
+                        onTap = { offset ->
+                            val selected = screenToPoint(offset, center, zoom, size)
+                            onTap(selected.latitude, selected.longitude)
+                        },
+                    )
+                }
+            }
+            .pointerInput(drawing, center, zoom) {
+                if (!drawing) {
+                    detectTransformGestures { _, pan, zoomChange, _ ->
+                        val displayCenter = MapTiles.toDisplay(center)
+                        val nextX = MapTiles.x(displayCenter.longitude, zoom) - pan.x / 256.0
+                        val nextY = MapTiles.y(displayCenter.latitude, zoom) - pan.y / 256.0
+                        val nextZoom = (zoom + kotlin.math.log2(zoomChange.toDouble()).roundToInt()).coerceIn(3, 19)
+                        val next = MapTiles.fromDisplay(
+                            MapTiles.lat(nextY, zoom),
+                            ((MapTiles.lon(nextX, zoom) + 180) % 360 + 360) % 360 - 180,
+                        )
+                        mapCenter = PositionPoint(next.latitude, next.longitude, center.altitude)
+                        if (nextZoom != zoom) zoom = nextZoom
+                    }
                 }
             }) {
             Canvas(Modifier.fillMaxSize()) {
@@ -406,16 +439,25 @@ private fun CoordinateMap(
                         (size.height / 2 + (MapTiles.y(display.latitude, zoom) - cy) * 256).toFloat(),
                     )
                 }
-                if (route.size > 1) {
+                val visibleRoute = route + draftRoute
+                if (visibleRoute.size > 1) {
                     val path = Path().apply {
-                        moveTo(project(route.first()).x, project(route.first()).y)
-                        route.drop(1).forEach { lineTo(project(it).x, project(it).y) }
+                        moveTo(project(visibleRoute.first()).x, project(visibleRoute.first()).y)
+                        visibleRoute.drop(1).forEach { lineTo(project(it).x, project(it).y) }
                     }
                     drawPath(path, routeColor, style = Stroke(width = 4f))
                 }
                 drawCircle(markerColor, radius = 8f, center = project(center))
                 liveLocation?.let { drawCircle(liveColor, radius = 7f, center = project(it)) }
             }
+            TextButton(
+                onClick = {
+                    drawing = !drawing
+                    if (!drawing) draftRoute = emptyList()
+                },
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), RoundedCornerShape(20.dp)),
+            ) { Text(if (drawing) "完成画线" else "画轨迹") }
             TextButton(
                 enabled = true,
                 onClick = onUseLiveLocation,
@@ -427,11 +469,21 @@ private fun CoordinateMap(
                 color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelSmall)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("轻触选点 · 拖动地图 · 双指缩放 · z$zoom", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
+            Text(if (drawing) "正在画线：拖动手指绘制路线" else "轻触选点 · 拖动地图 · 双指缩放 · z$zoom", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
             TextButton(enabled = zoom > 3, onClick = { zoom-- }) { Text("−") }
             TextButton(enabled = zoom < 18, onClick = { zoom++ }) { Text("+") }
         }
     }
+}
+
+private fun screenToPoint(offset: Offset, center: PositionPoint, zoom: Int, size: IntSize): PositionPoint {
+    val displayCenter = MapTiles.toDisplay(center)
+    val tx = MapTiles.x(displayCenter.longitude, zoom) + (offset.x - size.width / 2f) / 256.0
+    val ty = MapTiles.y(displayCenter.latitude, zoom) + (offset.y - size.height / 2f) / 256.0
+    return MapTiles.fromDisplay(
+        MapTiles.lat(ty, zoom),
+        ((MapTiles.lon(tx, zoom) + 180) % 360 + 360) % 360 - 180,
+    )
 }
 
 private data class SearchResult(val name: String, val point: PositionPoint)
