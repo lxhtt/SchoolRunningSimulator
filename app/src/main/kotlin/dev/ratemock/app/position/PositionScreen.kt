@@ -382,7 +382,6 @@ private fun CoordinateMap(
                             if (draftRoute.lastOrNull()?.distanceTo(next)?.let { it >= 2.0 } != false) {
                                 draftRoute = (draftRoute + next).takeLast(400)
                             }
-                            change.consumePositionChange()
                         },
                         onDragEnd = {
                             if (draftRoute.size > 1) onRouteDrawn(draftRoute)
@@ -480,10 +479,11 @@ private fun screenToPoint(offset: Offset, center: PositionPoint, zoom: Int, size
     val displayCenter = MapTiles.toDisplay(center)
     val tx = MapTiles.x(displayCenter.longitude, zoom) + (offset.x - size.width / 2f) / 256.0
     val ty = MapTiles.y(displayCenter.latitude, zoom) + (offset.y - size.height / 2f) / 256.0
-    return MapTiles.fromDisplay(
+    val display = MapTiles.fromDisplay(
         MapTiles.lat(ty, zoom),
         ((MapTiles.lon(tx, zoom) + 180) % 360 + 360) % 360 - 180,
     )
+    return PositionPoint(display.latitude, display.longitude, center.altitude)
 }
 
 private data class SearchResult(val name: String, val point: PositionPoint)
