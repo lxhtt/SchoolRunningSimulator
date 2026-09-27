@@ -1,12 +1,16 @@
 package dev.ratemock.app.position
 
-import android.content.Intent
-import android.net.Uri
+import android.Manifest
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -67,7 +72,6 @@ import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URLEncoder
 import java.net.URL
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -80,10 +84,10 @@ fun PositionScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val store = remember(context) { PositionHistoryStore(context) }
-    var latitudeText by rememberSaveable { mutableStateOf("39.9042") }
-    var longitudeText by rememberSaveable { mutableStateOf("116.4074") }
+    var latitudeText by rememberSaveable { mutableStateOf("") }
+    var longitudeText by rememberSaveable { mutableStateOf("") }
     var altitudeText by rememberSaveable { mutableStateOf("0") }
-    var point by remember { mutableStateOf<PositionPoint?>(PositionPoint(39.9042, 116.4074)) }
+    var point by remember { mutableStateOf<PositionPoint?>(null) }
     var route by remember { mutableStateOf(listOf<PositionPoint>()) }
     var name by rememberSaveable { mutableStateOf("") }
     var history by remember { mutableStateOf(store.entries()) }
@@ -96,6 +100,52 @@ fun PositionScreen(
     var moveMeters by rememberSaveable { mutableFloatStateOf(10f) }
     var simulationStatus by remember { mutableStateOf("IDLE") }
     var simulationHistoryClosed by remember { mutableStateOf(false) }
+    var liveLocation by remember { mutableStateOf<PositionPoint?>(null) }
+    var locationMessage by remember { mutableStateOf<String?>(null) }
+    var locationPermissionGranted by remember {
+        mutableStateOf(
+            context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED,
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            val granted = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (granted != locationPermissionGranted) locationPermissionGranted = granted
+            kotlinx.coroutines.delay(500)
+        }
+    }
+
+    DisposableEffect(locationPermissionGranted) {
+        if (!locationPermissionGranted) {
+            locationMessage = "请先授予定位权限"
+            onDispose { }
+        } else {
+            val manager = context.getSystemService(LocationManager::class.java)
+            val listener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    if (!location.isFromMockProvider) {
+                        liveLocation = PositionPoint(location.latitude, location.longitude, location.altitude)
+                        locationMessage = "实时定位已更新"
+                    }
+                }
+            }
+            val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+                .filter { runCatching { manager.isProviderEnabled(it) }.getOrDefault(false) }
+            providers.forEach { provider ->
+                runCatching {
+                    manager.getLastKnownLocation(provider)?.let { location ->
+                        if (!location.isFromMockProvider) liveLocation = PositionPoint(location.latitude, location.longitude, location.altitude)
+                    }
+                    manager.requestLocationUpdates(provider, 1_000L, 1f, listener, android.os.Looper.getMainLooper())
+                }
+            }
+            if (providers.isEmpty()) locationMessage = "系统定位服务未开启或暂无信号"
+            onDispose { runCatching { manager.removeUpdates(listener) } }
+        }
+    }
 
     LaunchedEffect(context) {
         val prefs = context.getSharedPreferences(MockLocationService.PREFS, 0)
@@ -140,13 +190,14 @@ fun PositionScreen(
             }
             item {
                 Text("地图路线仅显示本次选点和摇杆轨迹；回放进度显示在服务状态中。地图使用高德栅格图层，应用坐标仍为 WGS84。", style = MaterialTheme.typography.bodySmall)
-                CoordinateMap(point, route, onTap = { lat, lon ->
+                CoordinateMap(point, route, liveLocation, onTap = { lat, lon ->
                     runCatching { applyPoint(PositionPoint(lat, lon, point?.altitude ?: 0.0)) }
-                })
-            }
-            item {
+                }, onUseLiveLocation = {
+                    if (liveLocation != null) liveLocation?.let { applyPoint(it) } else onRequestPermissions()
+                }, hasLiveLocation = liveLocation != null)
                 Card(shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        locationMessage?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         Text("当前点", style = MaterialTheme.typography.titleMedium)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             NumberField("纬度", latitudeText, { latitudeText = it }, Modifier.weight(1f))
@@ -266,11 +317,24 @@ private fun parseCoordinate(value: String): Double = value.trim().replace(',', '
 private data class TileImage(val bitmap: android.graphics.Bitmap, val x: Int, val y: Int)
 
 @Composable
-private fun CoordinateMap(point: PositionPoint?, route: List<PositionPoint>, onTap: (Double, Double) -> Unit) {
+private fun CoordinateMap(
+    point: PositionPoint?,
+    route: List<PositionPoint>,
+    liveLocation: PositionPoint?,
+    onTap: (Double, Double) -> Unit,
+    onUseLiveLocation: () -> Unit,
+    hasLiveLocation: Boolean,
+) {
     val context = LocalContext.current
-    val center = point ?: PositionPoint(39.9042, 116.4074)
+    var mapCenter by remember { mutableStateOf(point ?: liveLocation ?: PositionPoint(39.9042, 116.4074)) }
+    LaunchedEffect(point) { point?.let { mapCenter = it } }
+    LaunchedEffect(liveLocation != null) {
+        if (point == null) liveLocation?.let { mapCenter = it }
+    }
+    val center = mapCenter
     val routeColor = MaterialTheme.colorScheme.primary
     val markerColor = MaterialTheme.colorScheme.error
+    val liveColor = MaterialTheme.colorScheme.tertiary
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
     var zoom by rememberSaveable { mutableStateOf(14) }
     var tiles by remember { mutableStateOf(emptyList<TileImage>()) }
@@ -291,17 +355,32 @@ private fun CoordinateMap(point: PositionPoint?, route: List<PositionPoint>, onT
         tiles = loaded
     }
     Column {
-        Box(Modifier.fillMaxWidth().height(230.dp).background(MaterialTheme.colorScheme.surfaceVariant)
+        Box(Modifier.fillMaxWidth().height(300.dp).background(MaterialTheme.colorScheme.surfaceVariant)
             .onSizeChanged { mapSize = it }
             .pointerInput(center, zoom) {
-                detectTapGestures { offset ->
+                detectTapGestures(
+                    onDoubleTap = { zoom = (zoom + 1).coerceAtMost(19) },
+                    onTap = { offset ->
+                        val displayCenter = MapTiles.toDisplay(center)
+                        val tx = MapTiles.x(displayCenter.longitude, zoom) + (offset.x - size.width / 2f) / 256.0
+                        val ty = MapTiles.y(displayCenter.latitude, zoom) + (offset.y - size.height / 2f) / 256.0
+                        val world = MapTiles.fromDisplay(MapTiles.lat(ty, zoom), ((MapTiles.lon(tx, zoom) + 180) % 360 + 360) % 360 - 180)
+                        onTap(world.latitude, world.longitude)
+                    },
+                )
+            }
+            .pointerInput(center, zoom) {
+                detectTransformGestures { _, pan, zoomChange, _ ->
                     val displayCenter = MapTiles.toDisplay(center)
-                    val tx = MapTiles.x(displayCenter.longitude, zoom) + (offset.x - size.width / 2f) / 256.0
-                    val ty = MapTiles.y(displayCenter.latitude, zoom) + (offset.y - size.height / 2f) / 256.0
-                    val displayLat = MapTiles.lat(ty, zoom)
-                    val displayLon = ((MapTiles.lon(tx, zoom) + 180) % 360 + 360) % 360 - 180
-                    val world = MapTiles.fromDisplay(displayLat, displayLon)
-                    onTap(world.latitude, world.longitude)
+                    val nextX = MapTiles.x(displayCenter.longitude, zoom) - pan.x / 256.0
+                    val nextY = MapTiles.y(displayCenter.latitude, zoom) - pan.y / 256.0
+                    val nextZoom = (zoom + kotlin.math.log2(zoomChange.toDouble()).roundToInt()).coerceIn(3, 19)
+                    val next = MapTiles.fromDisplay(
+                        MapTiles.lat(nextY, zoom),
+                        ((MapTiles.lon(nextX, zoom) + 180) % 360 + 360) % 360 - 180,
+                    )
+                    mapCenter = PositionPoint(next.latitude, next.longitude, center.altitude)
+                    if (nextZoom != zoom) zoom = nextZoom
                 }
             }) {
             Canvas(Modifier.fillMaxSize()) {
@@ -335,13 +414,20 @@ private fun CoordinateMap(point: PositionPoint?, route: List<PositionPoint>, onT
                     drawPath(path, routeColor, style = Stroke(width = 4f))
                 }
                 drawCircle(markerColor, radius = 8f, center = project(center))
+                liveLocation?.let { drawCircle(liveColor, radius = 7f, center = project(it)) }
             }
+            TextButton(
+                enabled = true,
+                onClick = onUseLiveLocation,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), RoundedCornerShape(20.dp)),
+            ) { Text(if (hasLiveLocation) "我的位置" else "开启定位") }
             Text("© 高德地图", Modifier.align(Alignment.BottomStart)
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)).padding(4.dp),
                 color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelSmall)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("点击地图选点 · z$zoom", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
+            Text("轻触选点 · 拖动地图 · 双指缩放 · z$zoom", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
             TextButton(enabled = zoom > 3, onClick = { zoom-- }) { Text("−") }
             TextButton(enabled = zoom < 18, onClick = { zoom++ }) { Text("+") }
         }
