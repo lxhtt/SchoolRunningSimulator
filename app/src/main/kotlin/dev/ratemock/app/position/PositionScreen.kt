@@ -5,13 +5,14 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.SystemClock
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,6 +45,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,6 +55,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.awaitPointerEvent
+import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
@@ -74,6 +79,7 @@ import java.net.HttpURLConnection
 import java.net.URLEncoder
 import java.net.URL
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 @Composable
@@ -349,18 +355,20 @@ private fun CoordinateMap(
     val liveColor = MaterialTheme.colorScheme.tertiary
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
     var zoom by rememberSaveable { mutableStateOf(14) }
+    val latestCenter = rememberUpdatedState(mapCenter)
+    val latestZoom = rememberUpdatedState(zoom)
     var tiles by remember { mutableStateOf(emptyList<TileImage>()) }
     var drawing by rememberSaveable { mutableStateOf(false) }
     var draftRoute by remember { mutableStateOf(emptyList<PositionPoint>()) }
     LaunchedEffect(center, zoom, mapSize) {
         if (mapSize == IntSize.Zero) return@LaunchedEffect
         tiles = emptyList()
-        kotlinx.coroutines.delay(450)
+        kotlinx.coroutines.delay(250)
         val displayCenter = MapTiles.toDisplay(center)
         val cx = MapTiles.x(displayCenter.longitude, zoom)
         val cy = MapTiles.y(displayCenter.latitude, zoom)
-        val halfX = mapSize.width / 512.0
-        val halfY = mapSize.height / 512.0
+        val halfX = mapSize.width / 512.0 + 1.0
+        val halfY = mapSize.height / 512.0 + 1.0
         val xs = (floor(cx - halfX).toInt()..floor(cx + halfX).toInt())
         val ys = (floor(cy - halfY).toInt()..floor(cy + halfY).toInt())
         val loaded = withContext(Dispatchers.IO) {
@@ -369,52 +377,126 @@ private fun CoordinateMap(
         tiles = loaded
     }
     Column {
-        Box(Modifier.fillMaxWidth().height(300.dp).background(MaterialTheme.colorScheme.surfaceVariant)
-            .onSizeChanged { mapSize = it }
-            .pointerInput(drawing, center, zoom) {
-                if (drawing) {
-                    detectDragGestures(
-                        onDragStart = { offset ->
-                            draftRoute = listOf(screenToPoint(offset, center, zoom, size))
-                        },
-                        onDrag = { change, _ ->
-                            val next = screenToPoint(change.position, center, zoom, size)
-                            if (draftRoute.lastOrNull()?.distanceTo(next)?.let { it >= 2.0 } != false) {
-                                draftRoute = (draftRoute + next).takeLast(400)
-                            }
-                        },
-                        onDragEnd = {
-                            if (draftRoute.size > 1) onRouteDrawn(draftRoute)
-                            draftRoute = emptyList()
-                        },
-                        onDragCancel = { draftRoute = emptyList() },
-                    )
-                } else {
-                    detectTapGestures(
-                        onDoubleTap = { zoom = (zoom + 1).coerceAtMost(19) },
-                        onTap = { offset ->
-                            val selected = screenToPoint(offset, center, zoom, size)
-                            onTap(selected.latitude, selected.longitude)
-                        },
-                    )
-                }
-            }
-            .pointerInput(drawing, center, zoom) {
-                if (!drawing) {
-                    detectTransformGestures { _, pan, zoomChange, _ ->
-                        val displayCenter = MapTiles.toDisplay(center)
-                        val nextX = MapTiles.x(displayCenter.longitude, zoom) - pan.x / 256.0
-                        val nextY = MapTiles.y(displayCenter.latitude, zoom) - pan.y / 256.0
-                        val nextZoom = (zoom + kotlin.math.log2(zoomChange.toDouble()).roundToInt()).coerceIn(3, 19)
-                        val next = MapTiles.fromDisplay(
-                            MapTiles.lat(nextY, zoom),
-                            ((MapTiles.lon(nextX, zoom) + 180) % 360 + 360) % 360 - 180,
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(360.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .onSizeChanged { mapSize = it }
+                .pointerInput(drawing, mapSize) {
+                    if (drawing) {
+                        detectDragGestures(
+                            onDragStart = { offset ->
+                                draftRoute = listOf(screenToPoint(offset, latestCenter.value, latestZoom.value, size))
+                            },
+                            onDrag = { change, _ ->
+                                val next = screenToPoint(change.position, latestCenter.value, latestZoom.value, size)
+                                if (draftRoute.lastOrNull()?.distanceTo(next)?.let { it >= 2.0 } != false) {
+                                    draftRoute = (draftRoute + next).takeLast(200)
+                                }
+                                change.consume()
+                            },
+                            onDragEnd = {
+                                if (draftRoute.size > 1) onRouteDrawn(draftRoute)
+                                draftRoute = emptyList()
+                            },
+                            onDragCancel = { draftRoute = emptyList() },
                         )
-                        mapCenter = PositionPoint(next.latitude, next.longitude, center.altitude)
-                        if (nextZoom != zoom) zoom = nextZoom
+                    } else {
+                        var lastTapAt = 0L
+                        var lastTapPosition = Offset.Zero
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            var currentCenter = latestCenter.value
+                            var currentZoom = latestZoom.value
+                            var previous = mapOf(down.id to down.position)
+                            var moved = false
+                            var hadMultiplePointers = false
+                            var accumulatedPinchScale = 1f
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val active = event.changes.filter { it.pressed }
+                                if (active.isEmpty()) break
+                                if (active.size > 1) hadMultiplePointers = true
+                                val hasNewPointer = active.any { it.id !in previous }
+                                if (hasNewPointer) {
+                                    previous = active.associate { it.id to it.position }
+                                    continue
+                                }
+                                val currentCentroid = active.centroid { it.position }
+                                val previousCentroid = active.centroid { previous[it.id] ?: it.position }
+                                val pan = currentCentroid - previousCentroid
+                                val previousRadius = active.map { (previous[it.id] ?: it.position) - previousCentroid }
+                                    .map { kotlin.math.hypot(it.x.toDouble(), it.y.toDouble()) }
+                                    .average()
+                                val currentRadius = active.map { it.position - currentCentroid }
+                                    .map { kotlin.math.hypot(it.x.toDouble(), it.y.toDouble()) }
+                                    .average()
+                                val gestureZoom = if (active.size > 1 && previousRadius > 0.5) {
+                                    (currentRadius / previousRadius).toFloat().coerceIn(0.5f, 2f)
+                                } else {
+                                    1f
+                                }
+                                if (pan.getDistance() > 8f || kotlin.math.abs(gestureZoom - 1f) > 0.01f || active.size > 1) {
+                                    moved = true
+                                }
+                                if (moved) {
+                                    val zoomChange = if (active.size > 1) {
+                                        accumulatedPinchScale = (accumulatedPinchScale * gestureZoom).coerceIn(0.25f, 4f)
+                                        val step = kotlin.math.log2(accumulatedPinchScale.toDouble()).roundToInt()
+                                        if (step != 0) {
+                                            val change = 2.0.pow(step.toDouble()).toFloat()
+                                            accumulatedPinchScale /= change
+                                            change
+                                        } else {
+                                            1f
+                                        }
+                                    } else {
+                                        1f
+                                    }
+                                    val transformed = transformMapCenter(
+                                        center = currentCenter,
+                                        centroid = currentCentroid,
+                                        pan = pan,
+                                        zoomChange = zoomChange,
+                                        zoom = currentZoom,
+                                        size = size,
+                                    )
+                                    currentCenter = transformed.first
+                                    currentZoom = transformed.second
+                                    mapCenter = currentCenter
+                                    zoom = currentZoom
+                                }
+                                active.forEach { it.consume() }
+                                previous = active.associate { it.id to it.position }
+                            }
+                            if (!moved && !hadMultiplePointers) {
+                                val now = SystemClock.uptimeMillis()
+                                val isDoubleTap = now - lastTapAt in 1..350 &&
+                                    (down.position - lastTapPosition).getDistance() < 48f
+                                if (isDoubleTap) {
+                                    val transformed = transformMapCenter(
+                                        center = latestCenter.value,
+                                        centroid = down.position,
+                                        pan = Offset.Zero,
+                                        zoomChange = 2f,
+                                        zoom = latestZoom.value,
+                                        size = size,
+                                    )
+                                    mapCenter = transformed.first
+                                    zoom = transformed.second
+                                    lastTapAt = 0L
+                                } else {
+                                    val selected = screenToPoint(down.position, latestCenter.value, latestZoom.value, size)
+                                    onTap(selected.latitude, selected.longitude)
+                                    lastTapAt = now
+                                    lastTapPosition = down.position
+                                }
+                            }
+                        }
                     }
-                }
-            }) {
+                },
+        ) {
             Canvas(Modifier.fillMaxSize()) {
                 val displayCenter = MapTiles.toDisplay(center)
                 val cx = MapTiles.x(displayCenter.longitude, zoom)
@@ -431,23 +513,24 @@ private fun CoordinateMap(
                         drawLine(grid, Offset(0f, size.height * i / 6f), Offset(size.width, size.height * i / 6f))
                     }
                 }
-                fun project(item: PositionPoint): Offset {
-                    val display = MapTiles.toDisplay(item)
-                    return Offset(
-                        (size.width / 2 + (MapTiles.x(display.longitude, zoom) - cx) * 256).toFloat(),
-                        (size.height / 2 + (MapTiles.y(display.latitude, zoom) - cy) * 256).toFloat(),
-                    )
-                }
+                fun project(item: PositionPoint): Offset = projectPoint(item, center, zoom, size)
                 val visibleRoute = route + draftRoute
                 if (visibleRoute.size > 1) {
                     val path = Path().apply {
                         moveTo(project(visibleRoute.first()).x, project(visibleRoute.first()).y)
                         visibleRoute.drop(1).forEach { lineTo(project(it).x, project(it).y) }
                     }
-                    drawPath(path, routeColor, style = Stroke(width = 4f))
+                    drawPath(path, Color.Black.copy(alpha = 0.65f), style = Stroke(width = 11f))
+                    drawPath(path, routeColor, style = Stroke(width = 7f))
                 }
-                drawCircle(markerColor, radius = 8f, center = project(center))
-                liveLocation?.let { drawCircle(liveColor, radius = 7f, center = project(it)) }
+                val centerPosition = project(center)
+                drawCircle(Color.White, radius = 13f, center = centerPosition)
+                drawCircle(markerColor, radius = 8f, center = centerPosition)
+                liveLocation?.let {
+                    val livePosition = project(it)
+                    drawCircle(Color.White, radius = 12f, center = livePosition)
+                    drawCircle(liveColor, radius = 7f, center = livePosition)
+                }
             }
             TextButton(
                 onClick = {
@@ -473,6 +556,45 @@ private fun CoordinateMap(
             TextButton(enabled = zoom < 18, onClick = { zoom++ }) { Text("+") }
         }
     }
+}
+
+private fun List<PointerInputChange>.centroid(position: (PointerInputChange) -> Offset): Offset {
+    if (isEmpty()) return Offset.Zero
+    val total = fold(Offset.Zero) { acc, change -> acc + position(change) }
+    return total / size.toFloat()
+}
+
+private fun transformMapCenter(
+    center: PositionPoint,
+    centroid: Offset,
+    pan: Offset,
+    zoomChange: Float,
+    zoom: Int,
+    size: IntSize,
+): Pair<PositionPoint, Int> {
+    val nextZoom = (zoom + kotlin.math.log2(zoomChange.toDouble()).roundToInt()).coerceIn(3, 19)
+    val scale = 2.0.pow((nextZoom - zoom).toDouble())
+    val displayCenter = MapTiles.toDisplay(center)
+    val centerX = MapTiles.x(displayCenter.longitude, zoom) * scale
+    val centerY = MapTiles.y(displayCenter.latitude, zoom) * scale
+    val offset = centroid - Offset(size.width / 2f, size.height / 2f)
+    val transformed = Offset(((1.0 - scale) * offset.x + pan.x).toFloat(), ((1.0 - scale) * offset.y + pan.y).toFloat())
+    val nextX = centerX - transformed.x / 256.0
+    val nextY = centerY - transformed.y / 256.0
+    val display = MapTiles.fromDisplay(
+        MapTiles.lat(nextY, nextZoom),
+        ((MapTiles.lon(nextX, nextZoom) + 180) % 360 + 360) % 360 - 180,
+    )
+    return PositionPoint(display.latitude, display.longitude, center.altitude) to nextZoom
+}
+
+private fun projectPoint(item: PositionPoint, center: PositionPoint, zoom: Int, size: IntSize): Offset {
+    val displayCenter = MapTiles.toDisplay(center)
+    val display = MapTiles.toDisplay(item)
+    return Offset(
+        (size.width / 2 + (MapTiles.x(display.longitude, zoom) - MapTiles.x(displayCenter.longitude, zoom)) * 256).toFloat(),
+        (size.height / 2 + (MapTiles.y(display.latitude, zoom) - MapTiles.y(displayCenter.latitude, zoom)) * 256).toFloat(),
+    )
 }
 
 private fun screenToPoint(offset: Offset, center: PositionPoint, zoom: Int, size: IntSize): PositionPoint {
