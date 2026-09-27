@@ -52,6 +52,7 @@ import dev.ratemock.core.position.PositionPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 @Composable
 fun PositionScreen(
