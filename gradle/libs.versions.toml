@@ -16,7 +16,7 @@ junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 amap3dmap = { module = "com.amap.api:3dmap", version = "9.2.1" }
-amap-location = { module = "com.amap.api:location", version = "6.5.1" }
+amap-location = { module = "com.amap.api:location", version = "6.1.0" }
 amap-search = { module = "com.amap.api:search", version = "9.7.1" }
 
 [plugins]
