@@ -15,7 +15,7 @@
 - P5 安全回放基础：纯 JVM 本地位置/步数事件协议、时间/序号/计数器/路线校验、只读离线回放；该回放协议本身不产生 Android Location/SensorEvent。独立位置工作台提供用户显式启动的系统 Mock Location，并可在模拟服务成功关闭后由用户明确选择回放最近模拟路线；两者不会自动联动或读取真实记录。规格见 [`docs/superpowers/specs/2026-09-25-p5-safe-replay-design.md`](docs/superpowers/specs/2026-09-25-p5-safe-replay-design.md)。
 - P6 硬化：真实记录使用持久化生命周期状态和原子关闭流程；真实导出严格绑定已关闭文件并重新解析校验。模拟页提供运行前自检、波形复核和三个只填入表单的保守参数预设，不读取真实 GPS、不修改个人校准。
 - P7 首期设备诊断与自有测试接收端：诊断页检查真实步进/计数器能力及本应用回调时序；“测试接收”页和独立 `dev.ratemock.receiver` 测试包只读取用户选择的本地 `ratemock.local-replay.v1` JSON，复用只读校验器，不注入系统、不跨应用通信。
-- 位置工作台：单 APK 内提供坐标输入、高德栅格地图与离线画布回退、Nominatim 地点搜索、私有历史位置、摇杆路线和用户显式启动的 Android Mock Location 前台服务；应用内部和系统注入坐标保持 WGS84，地图显示层按高德要求转换为 GCJ-02。可在模拟路线成功结束并关闭历史文件后，由用户显式回放该合成路线。Mock GPS 与真实记录互斥，服务停止时清理 test provider；不复制 GoGoGo 源码、百度 SDK、密钥或签名材料。
+- 位置工作台：单 APK 内提供坐标输入、官方高德 Android 地图 SDK、私有历史位置、摇杆路线和用户显式启动的 Android Mock Location 前台服务；应用内部和系统注入坐标保持 WGS84，地图显示层按高德要求转换为 GCJ-02。地点搜索使用高德 POI SDK。可在模拟路线成功结束并关闭历史文件后，由用户显式回放该合成路线。Mock GPS 与真实记录互斥，服务停止时清理 test provider；不复制 GoGoGo 源码、百度 SDK、密钥或签名材料。
 - GitHub Actions：JDK 17/21 内核测试（含交互会话与 S7 桥接 Python 测试）→ Android lint → debug APK 与 SHA-256 产物；不会上传个人健康数据。
 - 离线工程检查脚本；本地构建入口默认阻止依赖下载。
 
@@ -56,7 +56,7 @@ P7 现包含两个同源入口：主应用内“测试接收”页，以及独�
 
 ## 许可
 
-RateMock 原创内容按 Apache License 2.0 授权，详见 [`LICENSE`](LICENSE)。本版本的位置工作台为 RateMock 原创实现，地图使用高德栅格图层并遵守其服务条款、归属和请求限制；地点搜索使用 Nominatim 时也须遵守其服务条款与使用限制。地图显示层使用 GCJ-02，应用内部及 Mock Location 仍使用 WGS84。该许可不覆盖明确标注的第三方材料；GoGoGo 源码、百度 SDK、密钥和签名材料未复制或打包。Gradle Wrapper 与其他依赖各自受其上游许可约束。开始分发构建产物前，请核查并保留相应的第三方许可与声明，见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+RateMock 原创内容按 Apache License 2.0 授权，详见 [`LICENSE`](LICENSE)。本版本的位置工作台使用高德 Android SDK，遵守其服务条款、归属和隐私要求；地点搜索使用高德 POI 服务。地图显示层使用 GCJ-02，应用内部及 Mock Location 仍使用 WGS84。该许可不覆盖明确标注的第三方材料；GoGoGo 源码、百度 SDK、密钥和签名材料未复制或打包。Gradle Wrapper 与其他依赖各自受其上游许可约束。开始分发构建产物前，请核查并保留相应的第三方许可与声明，见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
 ## 致谢
 

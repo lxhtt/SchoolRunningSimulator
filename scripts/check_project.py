@@ -59,8 +59,28 @@ def main() -> None:
     ]
     for path in required:
         require((ROOT / path).is_file(), f"Missing file: {path}")
-
     jar = ROOT / "gradle/wrapper/gradle-wrapper.jar"
+    require((ROOT / "app/src/main/kotlin/dev/ratemock/app/RateMockApplication.kt").is_file(), "Missing AMap application initialization")
+    require((ROOT / "app/src/main/kotlin/dev/ratemock/app/position/AMapCoordinateMap.kt").is_file(), "Missing AMap map adapter")
+
+    app_manifest = ET.fromstring(text("app/src/main/AndroidManifest.xml"))
+    app_application = app_manifest.find("application")
+    require(app_application is not None and app_application.attrib.get(ANDROID + "name") == ".RateMockApplication",
+            "Application must initialize AMap privacy state")
+    require(any(meta.attrib.get(ANDROID + "name") == "com.amap.api.v2.apikey" for meta in app_application.findall("meta-data")),
+            "Manifest must inject the AMap API key")
+    app_gradle = text("app/build.gradle.kts")
+    require('implementation(libs.amap.3dmap)' in app_gradle and
+            'implementation(libs.amap.location)' in app_gradle and
+            'implementation(libs.amap.search)' in app_gradle,
+            "App must declare pinned AMap SDK modules")
+    position = text("app/src/main/kotlin/dev/ratemock/app/position/PositionScreen.kt")
+    amap_adapter = text("app/src/main/kotlin/dev/ratemock/app/position/AMapCoordinateMap.kt")
+    require("AMapLocationClient" in position and "fromDisplay(location.latitude, location.longitude)" in position,
+            "AMap location results must be converted to WGS84")
+    require("MapView" in amap_adapter and "rememberUpdatedState" in amap_adapter and "toWgs84" in amap_adapter,
+            "AMap adapter must own map lifecycle and coordinate boundary")
+
     require(
         hashlib.sha256(jar.read_bytes()).hexdigest()
         == "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d",

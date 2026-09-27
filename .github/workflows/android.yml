@@ -101,8 +101,32 @@ jobs:
           yes | "$sdk_manager" --licenses > /dev/null
           set -o pipefail
           "$sdk_manager" "platforms;android-36" "build-tools;36.0.0"
+      - name: Restore fixed AMap debug signing configuration
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RATEMOCK_DEBUG_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.RATEMOCK_DEBUG_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RATEMOCK_DEBUG_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RATEMOCK_DEBUG_KEY_PASSWORD }}
+        run: |
+          if [[ -n "$KEYSTORE_BASE64" ]]; then
+            install -d -m 700 "$RUNNER_TEMP/ratemock-signing"
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/ratemock-signing/debug.keystore"
+            chmod 600 "$RUNNER_TEMP/ratemock-signing/debug.keystore"
+            {
+              printf 'RATEMOCK_KEYSTORE_PATH=%s\n' "$RUNNER_TEMP/ratemock-signing/debug.keystore"
+              printf 'RATEMOCK_KEYSTORE_PASSWORD=%s\n' "$KEYSTORE_PASSWORD"
+              printf 'RATEMOCK_KEY_ALIAS=%s\n' "$KEY_ALIAS"
+              printf 'RATEMOCK_KEY_PASSWORD=%s\n' "$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+          fi
       - name: Lint and build
+        env:
+          AMAP_API_KEY: ${{ secrets.AMAP_API_KEY }}
         run: bash scripts/build-android.sh
+      - name: Remove temporary signing material
+        if: ${{ always() }}
+        run: rm -rf "$RUNNER_TEMP/ratemock-signing"
+
       - name: Create APK checksum
         working-directory: app/build/outputs/apk/debug
         run: sha256sum app-debug.apk > SHA256SUMS
