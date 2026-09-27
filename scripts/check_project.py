@@ -221,8 +221,9 @@ def main() -> None:
     require(
         {
             "android.permission.ACCESS_COARSE_LOCATION",
-            "android.permission.INTERNET",
             "android.permission.ACCESS_FINE_LOCATION",
+            "android.permission.ACCESS_MOCK_LOCATION",
+            "android.permission.INTERNET",
             "android.permission.ACTIVITY_RECOGNITION",
             "android.permission.FOREGROUND_SERVICE",
             "android.permission.FOREGROUND_SERVICE_LOCATION",

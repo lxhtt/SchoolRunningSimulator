@@ -139,7 +139,7 @@ fun PositionScreen(
                 Text("地图、历史和模拟定位服务独立于真实记录与模拟跑台。", style = MaterialTheme.typography.bodyMedium)
             }
             item {
-                Text("地图路线仅显示本次选点和摇杆轨迹；回放进度显示在服务状态中。", style = MaterialTheme.typography.bodySmall)
+                Text("地图路线仅显示本次选点和摇杆轨迹；回放进度显示在服务状态中。地图使用高德栅格图层，应用坐标仍为 WGS84。", style = MaterialTheme.typography.bodySmall)
                 CoordinateMap(point, route, onTap = { lat, lon ->
                     runCatching { applyPoint(PositionPoint(lat, lon, point?.altitude ?: 0.0)) }
                 })
@@ -278,8 +278,9 @@ private fun CoordinateMap(point: PositionPoint?, route: List<PositionPoint>, onT
         if (mapSize == IntSize.Zero) return@LaunchedEffect
         tiles = emptyList()
         kotlinx.coroutines.delay(450)
-        val cx = MapTiles.x(center.longitude, zoom)
-        val cy = MapTiles.y(center.latitude, zoom)
+        val displayCenter = MapTiles.toDisplay(center)
+        val cx = MapTiles.x(displayCenter.longitude, zoom)
+        val cy = MapTiles.y(displayCenter.latitude, zoom)
         val halfX = mapSize.width / 512.0
         val halfY = mapSize.height / 512.0
         val xs = (floor(cx - halfX).toInt()..floor(cx + halfX).toInt())
@@ -294,16 +295,19 @@ private fun CoordinateMap(point: PositionPoint?, route: List<PositionPoint>, onT
             .onSizeChanged { mapSize = it }
             .pointerInput(center, zoom) {
                 detectTapGestures { offset ->
-                    val tx = MapTiles.x(center.longitude, zoom) + (offset.x - size.width / 2f) / 256.0
-                    val ty = MapTiles.y(center.latitude, zoom) + (offset.y - size.height / 2f) / 256.0
-                    val lat = MapTiles.lat(ty, zoom)
-                    val lon = ((MapTiles.lon(tx, zoom) + 180) % 360 + 360) % 360 - 180
-                    onTap(lat, lon)
+                    val displayCenter = MapTiles.toDisplay(center)
+                    val tx = MapTiles.x(displayCenter.longitude, zoom) + (offset.x - size.width / 2f) / 256.0
+                    val ty = MapTiles.y(displayCenter.latitude, zoom) + (offset.y - size.height / 2f) / 256.0
+                    val displayLat = MapTiles.lat(ty, zoom)
+                    val displayLon = ((MapTiles.lon(tx, zoom) + 180) % 360 + 360) % 360 - 180
+                    val world = MapTiles.fromDisplay(displayLat, displayLon)
+                    onTap(world.latitude, world.longitude)
                 }
             }) {
             Canvas(Modifier.fillMaxSize()) {
-                val cx = MapTiles.x(center.longitude, zoom)
-                val cy = MapTiles.y(center.latitude, zoom)
+                val displayCenter = MapTiles.toDisplay(center)
+                val cx = MapTiles.x(displayCenter.longitude, zoom)
+                val cy = MapTiles.y(displayCenter.latitude, zoom)
                 tiles.forEach { tile ->
                     val left = (size.width / 2 + (tile.x - cx) * 256).roundToInt()
                     val top = (size.height / 2 + (tile.y - cy) * 256).roundToInt()
@@ -316,10 +320,13 @@ private fun CoordinateMap(point: PositionPoint?, route: List<PositionPoint>, onT
                         drawLine(grid, Offset(0f, size.height * i / 6f), Offset(size.width, size.height * i / 6f))
                     }
                 }
-                fun project(item: PositionPoint): Offset = Offset(
-                    (size.width / 2 + (MapTiles.x(item.longitude, zoom) - cx) * 256).toFloat(),
-                    (size.height / 2 + (MapTiles.y(item.latitude, zoom) - cy) * 256).toFloat(),
-                )
+                fun project(item: PositionPoint): Offset {
+                    val display = MapTiles.toDisplay(item)
+                    return Offset(
+                        (size.width / 2 + (MapTiles.x(display.longitude, zoom) - cx) * 256).toFloat(),
+                        (size.height / 2 + (MapTiles.y(display.latitude, zoom) - cy) * 256).toFloat(),
+                    )
+                }
                 if (route.size > 1) {
                     val path = Path().apply {
                         moveTo(project(route.first()).x, project(route.first()).y)
@@ -329,7 +336,7 @@ private fun CoordinateMap(point: PositionPoint?, route: List<PositionPoint>, onT
                 }
                 drawCircle(markerColor, radius = 8f, center = project(center))
             }
-            Text("© OpenStreetMap contributors", Modifier.align(Alignment.BottomStart)
+            Text("© 高德地图", Modifier.align(Alignment.BottomStart)
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)).padding(4.dp),
                 color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelSmall)
         }

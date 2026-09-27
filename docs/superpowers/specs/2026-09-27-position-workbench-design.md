@@ -27,7 +27,7 @@ The workbench is a new top-level tab in `MainActivity`. It combines the coordina
 
 ## Map and Search
 
-The map renderer uses public OSM raster tiles only when the network is available. It uses small memory and app-private disk caches, bounded zoom, and an identifying User-Agent. No provider key is stored in source or build configuration. Failed tile requests never block coordinate editing or mock updates; the renderer displays a coordinate grid and the current route instead. OSM attribution remains visible on the map.
+The map renderer uses public AMap raster tiles when the network is available. It uses small memory and app-private disk caches, bounded zoom, and an identifying User-Agent. No provider key or SDK is stored in source or build configuration. RateMock stores, searches, and injects WGS84 coordinates; only the map display layer converts to GCJ-02 for AMap and converts map taps back before applying them. Failed tile requests never block coordinate editing or mock updates; the renderer displays a coordinate grid and the current route instead. AMap attribution remains visible on the map.
 
 Search uses a dedicated geocoding request path with timeout, query length limits, and a minimum request interval. Results are parsed into validated `PositionPoint` values. A failed or unavailable network returns an inline error while preserving the current point and history.
 
@@ -58,4 +58,4 @@ JVM tests cover coordinate validation, longitude wrapping, movement, distance, a
 
 ## Licensing
 
-RateMock remains Apache-2.0. The implementation is original RateMock code and uses no GoGoGo source or bundled proprietary/third-party SDK assets. Any future map provider integration must be documented separately with its license and terms.
+RateMock remains Apache-2.0. The implementation is original RateMock code and uses no GoGoGo source or bundled proprietary/third-party SDK assets. The map adapter uses public AMap raster tiles without a provider key or SDK; Nominatim search remains a separate public service. Their licenses, attribution, usage limits, and terms must be reviewed before distribution.

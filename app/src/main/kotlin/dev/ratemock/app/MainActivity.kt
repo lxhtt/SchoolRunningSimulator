@@ -154,7 +154,12 @@ class MainActivity : ComponentActivity() {
 
 
     private fun openMockLocationSettings() {
-        runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }
+        val chooser = Intent("android.settings.MOCK_LOCATION_APP_SETTINGS")
+        try {
+            startActivity(chooser)
+        } catch (_: ActivityNotFoundException) {
+            runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }
+        }
     }
 
     private fun sendMockLocationAction(action: String, point: PositionPoint?) {
