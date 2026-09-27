@@ -56,8 +56,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.awaitPointerEvent
-import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
@@ -513,7 +511,7 @@ private fun CoordinateMap(
                         drawLine(grid, Offset(0f, size.height * i / 6f), Offset(size.width, size.height * i / 6f))
                     }
                 }
-                fun project(item: PositionPoint): Offset = projectPoint(item, center, zoom, size)
+                fun project(item: PositionPoint): Offset = projectPoint(item, center, zoom, mapSize)
                 val visibleRoute = route + draftRoute
                 if (visibleRoute.size > 1) {
                     val path = Path().apply {
