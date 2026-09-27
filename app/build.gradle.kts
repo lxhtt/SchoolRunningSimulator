@@ -77,7 +77,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.foundation)
-    implementation(libs.amap.3dmap)
+    implementation(libs.amap3dmap)
     implementation(libs.amap.location)
     implementation(libs.amap.search)
     implementation(libs.androidx.compose.material3)

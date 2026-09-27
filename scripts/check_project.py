@@ -70,7 +70,7 @@ def main() -> None:
     require(any(meta.attrib.get(ANDROID + "name") == "com.amap.api.v2.apikey" for meta in app_application.findall("meta-data")),
             "Manifest must inject the AMap API key")
     app_gradle = text("app/build.gradle.kts")
-    require('implementation(libs.amap.3dmap)' in app_gradle and
+    require('implementation(libs.amap3dmap)' in app_gradle and
             'implementation(libs.amap.location)' in app_gradle and
             'implementation(libs.amap.search)' in app_gradle,
             "App must declare pinned AMap SDK modules")
